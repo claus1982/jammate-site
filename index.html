@@ -2,164 +2,238 @@
 <html lang="it">
 <head>
   <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; script-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-ancestors 'none'; upgrade-insecure-requests" />
+  <meta name="referrer" content="no-referrer" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <title>JamMate — Sta per cominciare</title>
-  <meta name="description" content="JamMate sta per aprire le porte. La community dei musicisti dal vivo: trova chi suona con te. Si parte lunedì 29 giugno, ore 21:00." />
   <meta name="theme-color" content="#0b0c14" />
   <meta name="color-scheme" content="dark" />
+  <meta name="description" content="JamMate sta per andare live. Due voci stanno entrando in fase — trova chi suona con te." />
   <link rel="canonical" href="https://www.jammate.it/" />
-  <link rel="icon" href="/icon.svg" type="image/svg+xml" />
-  <link rel="apple-touch-icon" href="/icon-192.png" />
-  <!-- Anteprima social -->
+
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="JamMate" />
-  <meta property="og:title" content="JamMate — Sta per cominciare" />
-  <meta property="og:description" content="La community dei musicisti dal vivo sta per aprire le porte. Si parte lunedì 29 giugno, ore 21:00." />
+  <meta property="og:title" content="JamMate — stiamo per andare in risonanza" />
+  <meta property="og:description" content="Due voci stanno entrando in fase. Il primo segnale arriva il 29.06.2026, ore 21:00." />
   <meta property="og:url" content="https://www.jammate.it/" />
-  <meta property="og:image" content="https://www.jammate.it/og-card.png" />
+  <meta property="og:image" content="https://www.jammate.it/og.png" />
   <meta property="og:image:width" content="1200" />
   <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="JamMate — due onde, viola e rosa, che entrano in fase" />
   <meta property="og:locale" content="it_IT" />
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="JamMate — Sta per cominciare" />
-  <meta name="twitter:description" content="La community dei musicisti dal vivo sta per aprire le porte. Si parte lunedì 29 giugno, ore 21:00." />
-  <meta name="twitter:image" content="https://www.jammate.it/og-card.png" />
-  <meta name="robots" content="index,follow" />
+  <meta name="twitter:title" content="JamMate — stiamo per andare in risonanza" />
+  <meta name="twitter:description" content="Due voci stanno entrando in fase. Il primo segnale arriva il 29.06.2026, ore 21:00." />
+  <meta name="twitter:image" content="https://www.jammate.it/og.png" />
+
+  <title>JamMate — stiamo per andare live</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+
   <style>
+    /* ── Font (self-hosted, GDPR: nessun trasferimento a terzi) ───────────── */
+    @font-face{font-family:'Jakarta';src:url('fonts/jakarta-400.woff2') format('woff2');font-weight:400;font-style:normal;font-display:swap}
+    @font-face{font-family:'Jakarta';src:url('fonts/jakarta-500.woff2') format('woff2');font-weight:500;font-style:normal;font-display:swap}
+    @font-face{font-family:'Jakarta';src:url('fonts/jakarta-700.woff2') format('woff2');font-weight:700;font-style:normal;font-display:swap}
+    @font-face{font-family:'Jakarta';src:url('fonts/jakarta-800.woff2') format('woff2');font-weight:800;font-style:normal;font-display:swap}
+
+    /* ── Token (da design-tokens.json) ────────────────────────────────────── */
     :root{
-      --bg:#0b0c14; --ink:#f4f4f8; --muted:#a7a8b5; --line:rgba(255,255,255,.10);
-      --card:rgba(255,255,255,.04); --v1:#8b6cff; --v2:#ff5c9d;
+      --bg:#0b0c14; --bg-2:#0d0e1a;
+      --text:#f1f3ff; --muted:#969cc4; --faint:#5a608c;
+      --line:#2a2f52; --accent:#8b6cff; --accent-2:#ff5c9d;
+      --grad:linear-gradient(135deg,#8b6cff,#ff5c9d);
+      --mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+      --ease:cubic-bezier(.2,.9,.3,1.2);
     }
-    *{box-sizing:border-box}
-    html,body{height:100%;overflow-x:hidden;max-width:100%}
+    *{margin:0;padding:0;box-sizing:border-box}
+    html,body{height:100%}
     body{
-      margin:0; background:var(--bg); color:var(--ink);
-      font-family:"Plus Jakarta Sans",system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-      -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
-      min-height:100svh; display:flex; flex-direction:column; overflow-x:hidden;
-    }
-    /* Glow di sfondo (risonanza) */
-    body::before{
-      content:""; position:fixed; inset:-15% 0 auto 0; height:70vh; z-index:0; pointer-events:none;
       background:
-        radial-gradient(60% 60% at 30% 20%, rgba(139,108,255,.22), transparent 70%),
-        radial-gradient(55% 55% at 80% 10%, rgba(255,92,157,.18), transparent 70%);
-      filter:blur(8px);
+        radial-gradient(120% 90% at 68% 26%, rgba(139,108,255,.16), transparent 46%),
+        radial-gradient(90% 80% at 30% 78%, rgba(255,92,157,.10), transparent 52%),
+        radial-gradient(140% 120% at 50% 50%, #11131f 0%, var(--bg) 58%, #07080e 100%);
+      color:var(--text);
+      font-family:'Jakarta',system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+      -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
+      min-height:100svh; overflow-x:hidden;
+      display:flex; flex-direction:column; align-items:center; justify-content:center;
+      position:relative; padding:clamp(20px,5vw,48px);
     }
-    main{
-      position:relative; z-index:1; flex:1 0 auto;
-      width:min(680px,calc(100% - 32px)); margin:0 auto; padding:clamp(40px,9vh,96px) 0 32px;
-      display:flex; flex-direction:column; align-items:center; text-align:center; gap:22px;
+    /* vignette */
+    body::after{content:"";position:fixed;inset:0;pointer-events:none;
+      background:radial-gradient(122% 122% at 50% 42%, transparent 62%, rgba(0,0,0,.42) 100%); z-index:6}
+
+    /* ── Scientific plate (fondale) ───────────────────────────────────────── */
+    .plate{position:fixed;inset:0;z-index:0;pointer-events:none;color:var(--line)}
+    .plate svg{position:absolute;inset:0;width:100%;height:100%}
+    .plate .arc{fill:none;stroke:currentColor;opacity:.35}
+    .plate .tick{stroke:currentColor;opacity:.5}
+    .plate .lbl{fill:var(--faint);font-family:var(--mono);font-size:9px;letter-spacing:.14em}
+    .frame{position:fixed;inset:clamp(12px,2.4vw,26px);border:1px solid var(--line);
+      opacity:.5;border-radius:4px;z-index:1;pointer-events:none}
+    .frame::before,.frame::after{content:"";position:absolute;width:9px;height:9px;border:1px solid var(--accent);opacity:.7}
+    .frame::before{top:-1px;left:-1px;border-right:0;border-bottom:0}
+    .frame::after{bottom:-1px;right:-1px;border-left:0;border-top:0}
+
+    /* ── Layout ───────────────────────────────────────────────────────────── */
+    .stage{position:relative;z-index:5;width:100%;max-width:780px;
+      display:flex;flex-direction:column;align-items:center;text-align:center;
+      gap:clamp(22px,3.4vw,34px)}
+
+    .meta-top{position:fixed;top:clamp(20px,3.2vw,34px);left:0;right:0;z-index:5;
+      display:flex;justify-content:space-between;align-items:center;gap:12px;
+      padding:0 clamp(26px,4.4vw,52px);
+      font-family:var(--mono);font-size:clamp(9px,1.05vw,11px);letter-spacing:.18em;
+      text-transform:uppercase;color:var(--faint)}
+    .meta-top b{color:var(--muted);font-weight:500}
+    .meta-top .dotline{display:inline-flex;align-items:center;gap:7px}
+    .meta-top .live-dot{width:6px;height:6px;border-radius:50%;background:var(--accent-2);
+      box-shadow:0 0 10px 1px rgba(255,92,157,.8);animation:pulse 1.7s var(--ease) infinite}
+
+    /* ── Hero ─────────────────────────────────────────────────────────────── */
+    .hero{display:flex;flex-direction:column;align-items:center;gap:clamp(14px,2vw,20px)}
+    .mark{width:clamp(58px,9vw,82px);height:auto;
+      filter:drop-shadow(0 14px 40px rgba(139,108,255,.46))}
+    .wordmark{font-weight:800;letter-spacing:-.045em;line-height:.92;
+      font-size:clamp(52px,12vw,108px);color:var(--text)}
+    .grad{background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+
+    .wave{width:clamp(180px,42vw,320px);height:clamp(38px,7vw,58px);overflow:visible}
+    .wave svg{width:100%;height:100%;overflow:visible}
+    .wave .w{fill:none;stroke-width:2.4;stroke-linecap:round;
+      filter:drop-shadow(0 0 8px currentColor)}
+    .wave .w-v{stroke:var(--accent);color:rgba(139,108,255,.55)}
+    .wave .w-r{stroke:var(--accent-2);color:rgba(255,92,157,.55)}
+    .wave .node{fill:url(#jmGrad);opacity:0;filter:drop-shadow(0 0 11px rgba(255,92,157,.85))}
+
+    .lede{font-size:clamp(17px,2.5vw,24px);font-weight:500;color:var(--text);
+      letter-spacing:-.01em;max-width:22ch;line-height:1.3}
+    .sub{font-size:clamp(13px,1.7vw,15.5px);color:var(--muted);max-width:40ch;line-height:1.5}
+    .sub b{color:var(--text);font-weight:700}
+
+    /* ── Countdown ────────────────────────────────────────────────────────── */
+    .count{display:flex;align-items:flex-start;justify-content:center;
+      gap:clamp(8px,2vw,26px);margin-top:2px}
+    .unit{display:flex;flex-direction:column;align-items:center;gap:9px;min-width:clamp(56px,15vw,92px)}
+    .num{font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:-.04em;
+      font-size:clamp(40px,10vw,80px);line-height:1;color:var(--text);
+      font-feature-settings:"tnum" 1}
+    .lab{font-family:var(--mono);font-size:clamp(9px,1.2vw,11px);letter-spacing:.22em;
+      text-transform:uppercase;color:#9ea4cc}
+    .sep{font-weight:500;font-size:clamp(34px,8vw,64px);line-height:1.1;color:var(--line);
+      letter-spacing:-.02em;align-self:flex-start;margin-top:2px;user-select:none}
+
+    .coord{font-family:var(--mono);font-size:clamp(10px,1.4vw,13px);letter-spacing:.16em;
+      text-transform:uppercase;color:var(--muted);
+      display:inline-flex;align-items:center;gap:12px;flex-wrap:wrap;justify-content:center;
+      padding:11px 18px;border:1px solid var(--line);border-radius:999px;
+      background:rgba(22,26,43,.5);backdrop-filter:blur(6px)}
+    .coord .pin{width:6px;height:6px;border-radius:50%;background:var(--accent)}
+
+    /* ── Foot ─────────────────────────────────────────────────────────────── */
+    .foot{position:fixed;bottom:clamp(18px,3vw,30px);left:0;right:0;z-index:5;text-align:center;
+      font-family:var(--mono);font-size:clamp(9px,1.05vw,11px);letter-spacing:.16em;
+      text-transform:uppercase;color:var(--faint)}
+
+    /* ── Stato "live" (a T-0) ─────────────────────────────────────────────── */
+    .stage.is-live .count,.stage.is-live .sub{display:none}
+    .stage.is-live .lede{font-size:clamp(20px,3vw,30px);font-weight:700}
+    .enter{display:none;margin-top:6px;text-decoration:none;
+      font-weight:700;font-size:15px;letter-spacing:.02em;color:#fff;
+      padding:14px 26px;border-radius:14px;background:var(--grad);
+      box-shadow:0 10px 34px rgba(139,108,255,.45),inset 0 1px 0 rgba(255,255,255,.25)}
+    .stage.is-live .enter{display:inline-block}
+
+    .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
+      clip:rect(0,0,0,0);white-space:nowrap;border:0}
+
+    @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+    @keyframes slide-phase{
+      0%{transform:translateX(calc(var(--lambda) * -0.5))}
+      46%{transform:translateX(0)}
+      54%{transform:translateX(0)}
+      100%{transform:translateX(calc(var(--lambda) * -0.5))}
     }
-    /* Logo + anelli di risonanza */
-    .badge{position:relative; width:132px; height:132px; display:grid; place-items:center; margin-bottom:4px}
-    .ring{position:absolute; inset:0; margin:auto; width:96px; height:96px; border-radius:50%;
-      border:1.5px solid rgba(139,108,255,.45); opacity:0; animation:pulse 3.6s ease-out infinite}
-    .ring:nth-child(2){animation-delay:1.2s; border-color:rgba(255,92,157,.40)}
-    .ring:nth-child(3){animation-delay:2.4s}
-    @keyframes pulse{0%{transform:scale(.6);opacity:.7}80%{opacity:0}100%{transform:scale(2.1);opacity:0}}
-    .mark{position:relative; width:96px; height:96px; filter:drop-shadow(0 10px 30px rgba(139,108,255,.35))}
-    .eyebrow{
-      font-size:.72rem; font-weight:800; letter-spacing:.22em; text-transform:uppercase;
-      color:var(--v2); background:linear-gradient(90deg,var(--v1),var(--v2));
-      -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent;
+    @keyframes node-flash{0%,40%{opacity:0}48%,52%{opacity:.95}60%,100%{opacity:0}}
+    .wave .w-r{--lambda:60px;animation:slide-phase 6.5s var(--ease) infinite}
+    .wave .node{animation:node-flash 6.5s var(--ease) infinite}
+
+    @media (max-width:560px){
+      .meta-top .coordpt{display:none}
+      .sep{font-size:30px;opacity:.55;margin-top:6px}
+      .count{gap:8px}
+      .unit{min-width:0}
+      .frame{inset:9px}
     }
-    h1{margin:0; font-size:clamp(2.6rem,11vw,4.6rem); line-height:.98; font-weight:800; letter-spacing:-.02em}
-    h1 .grad{background:linear-gradient(120deg,var(--v1),var(--v2)); -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent}
-    .lead{margin:2px 0 0; font-size:clamp(1.05rem,3.4vw,1.3rem); color:var(--ink); max-width:30ch; line-height:1.45}
-    .sub{margin:0; color:var(--muted); font-size:.98rem; line-height:1.5; max-width:38ch}
-    /* Countdown */
-    .count{display:grid; grid-template-columns:repeat(4,1fr); gap:8px; width:100%; max-width:380px; margin:8px auto 4px}
-    .unit{
-      min-width:0; padding:14px 6px 11px; border:1px solid var(--line); border-radius:16px;
-      background:var(--card); backdrop-filter:blur(6px);
+    @media (prefers-reduced-motion:reduce){
+      .wave .w-r{animation:none;transform:translateX(0)}
+      .wave .node{animation:none;opacity:.9}
+      .meta-top .live-dot{animation:none}
     }
-    .num{font-size:clamp(1.55rem,6.5vw,2.4rem); font-weight:800; line-height:1; font-variant-numeric:tabular-nums; letter-spacing:-.01em}
-    .lab{margin-top:7px; font-size:.62rem; font-weight:700; letter-spacing:.14em; text-transform:uppercase; color:var(--muted)}
-    .when{
-      display:inline-flex; flex-wrap:wrap; align-items:center; justify-content:center; gap:6px 9px; margin-top:2px;
-      padding:9px 16px; border-radius:18px; max-width:100%; text-align:center;
-      border:1px solid var(--line); background:var(--card); color:var(--ink); font-size:.92rem; font-weight:600;
-    }
-    .when .dot{width:8px;height:8px;border-radius:50%;background:linear-gradient(120deg,var(--v1),var(--v2));box-shadow:0 0 0 0 rgba(255,92,157,.6);animation:beat 2s ease-out infinite}
-    @keyframes beat{0%{box-shadow:0 0 0 0 rgba(255,92,157,.55)}70%{box-shadow:0 0 0 9px rgba(255,92,157,0)}100%{box-shadow:0 0 0 0 rgba(255,92,157,0)}}
-    .live-cta{display:none; margin-top:6px; padding:14px 28px; border-radius:999px; border:0; cursor:pointer;
-      font:inherit; font-weight:800; font-size:1.05rem; color:#0e0f1a; text-decoration:none;
-      background:linear-gradient(120deg,var(--v1),var(--v2)); box-shadow:0 12px 34px rgba(139,108,255,.4)}
-    footer{
-      position:relative; z-index:1; flex-shrink:0; text-align:center; padding:22px 20px 28px;
-      color:var(--muted); font-size:.82rem; line-height:1.6;
-    }
-    footer .place{color:var(--ink); font-weight:600}
-    @media (prefers-reduced-motion: reduce){
-      .ring,.when .dot{animation:none}
-      .ring{opacity:0}
-    }
-    @media (max-width:380px){ .lab{font-size:.56rem; letter-spacing:.1em} .unit{padding:13px 4px 10px} }
   </style>
 </head>
 <body>
-  <main>
-    <div class="badge" aria-hidden="true">
-      <span class="ring"></span><span class="ring"></span><span class="ring"></span>
-      <svg class="mark" viewBox="4 4 56 56" xmlns="http://www.w3.org/2000/svg">
-        <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#8b6cff"/><stop offset="1" stop-color="#ff5c9d"/></linearGradient></defs>
-        <rect x="8" y="9" width="48" height="34" rx="14" fill="url(#g)"/>
-        <rect x="35.4" y="42" width="5.2" height="13" rx="2.6" fill="url(#g)"/>
-        <g fill="#0e0f1a">
+  <!-- gradiente firma condiviso -->
+  <svg width="0" height="0" aria-hidden="true" style="position:absolute"><defs>
+    <linearGradient id="jmGrad" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#8b6cff"/><stop offset="1" stop-color="#ff5c9d"/></linearGradient>
+  </defs></svg>
+
+  <!-- fondale "tavola scientifica" (Binary Resonance) -->
+  <div class="plate" aria-hidden="true">
+    <svg viewBox="0 0 1440 900" preserveAspectRatio="xMidYMid slice">
+      <g transform="translate(980 300)">
+        <circle class="arc" r="120"/><circle class="arc" r="220"/><circle class="arc" r="340"/><circle class="arc" r="470"/>
+      </g>
+      <!-- scala di tick a sinistra -->
+      <g transform="translate(70 0)">
+        <line class="tick" x1="0" y1="150" x2="0" y2="760" stroke-opacity=".3"/>
+        <g id="ladder"></g>
+      </g>
+      <text class="lbl" x="70" y="130">f / Hz</text>
+      <text class="lbl" x="1180" y="610" text-anchor="end">Δφ → 0</text>
+    </svg>
+  </div>
+  <div class="frame" aria-hidden="true"></div>
+
+  <header class="meta-top">
+    <span class="dotline"><i class="live-dot"></i>REC. 001 — <b>RISONANZA</b></span>
+    <span class="coordpt">45.4642&deg;N&nbsp;&middot;&nbsp;9.1900&deg;E &nbsp;<b>MILANO</b></span>
+  </header>
+
+  <main class="stage" id="stage">
+    <div class="hero">
+      <svg class="mark" viewBox="4 4 56 56" aria-label="JamMate" role="img">
+        <rect x="8" y="9" width="48" height="34" rx="14" fill="url(#jmGrad)"/>
+        <rect x="35.4" y="42" width="5.2" height="13" rx="2.6" fill="url(#jmGrad)"/>
+        <g fill="#0b0c14">
           <rect x="16" y="29" width="4" height="7" rx="2"/><rect x="23" y="25" width="4" height="11" rx="2"/>
           <rect x="30" y="20" width="4" height="16" rx="2"/><rect x="36" y="14" width="4" height="29" rx="2"/>
           <rect x="44" y="23" width="4" height="13" rx="2"/>
         </g>
       </svg>
+      <h1 class="wordmark">Jam<span class="grad">Mate</span></h1>
+      <div class="wave" id="wave" aria-hidden="true"></div>
+      <p class="lede">Due voci stanno entrando in fase.</p>
+      <p class="sub">JamMate sta per andare live. Il primo segnale arriva <b>domani sera</b> &mdash; e poi si suona.</p>
     </div>
 
-    <p class="eyebrow">Sta per cominciare</p>
-    <h1><span class="grad">JamMate</span></h1>
-    <p class="lead">La community dei musicisti dal vivo sta per aprire le porte.</p>
-    <p class="sub">Trova chi suona con te, metti su la band, sali sul palco. Manca pochissimo.</p>
+    <section class="count" id="count" aria-hidden="true">
+      <div class="unit"><span class="num" id="dd">00</span><span class="lab">giorni</span></div>
+      <span class="sep">:</span>
+      <div class="unit"><span class="num" id="hh">00</span><span class="lab">ore</span></div>
+      <span class="sep">:</span>
+      <div class="unit"><span class="num" id="mm">00</span><span class="lab">min</span></div>
+      <span class="sep">:</span>
+      <div class="unit"><span class="num" id="ss">00</span><span class="lab">sec</span></div>
+    </section>
 
-    <div class="count" id="count" role="timer" aria-label="Tempo al lancio">
-      <div class="unit"><div class="num" id="d">--</div><div class="lab">Giorni</div></div>
-      <div class="unit"><div class="num" id="h">--</div><div class="lab">Ore</div></div>
-      <div class="unit"><div class="num" id="m">--</div><div class="lab">Minuti</div></div>
-      <div class="unit"><div class="num" id="s">--</div><div class="lab">Secondi</div></div>
-    </div>
+    <div class="coord"><i class="pin"></i> GO-LIVE &nbsp;&middot;&nbsp; 29.06.2026 &nbsp;&middot;&nbsp; 21:00 CEST &nbsp;&middot;&nbsp; MILANO</div>
 
-    <div class="when" id="when"><span class="dot"></span><span>Apriamo le porte <strong>lunedì 29 giugno</strong>, ore 21:00</span></div>
-    <a class="live-cta" id="cta" href="/">🎶 Entra in JamMate</a>
+    <a class="enter" id="enter" href="/">Entra &rarr;</a>
   </main>
 
-  <footer>
-    <div>Si parte da <span class="place">Milano</span>, poi in tutta Italia.</div>
-    <div>© 2026 JamMate — Trova chi suona con te.</div>
-  </footer>
+  <footer class="foot">&copy; 2026 JamMate &nbsp;&middot;&nbsp; trova chi suona con te</footer>
+  <div class="sr-only" id="sr" aria-live="polite"></div>
 
-  <script>
-    (function(){
-      var TARGET = new Date("2026-06-29T21:00:00+02:00").getTime();
-      var el = { d:document.getElementById("d"), h:document.getElementById("h"), m:document.getElementById("m"), s:document.getElementById("s") };
-      var pad = function(n){ return (n<10?"0":"") + n; };
-      var firedReload = false;
-      function tick(){
-        var diff = TARGET - Date.now();
-        if (diff <= 0){
-          el.d.textContent="00"; el.h.textContent="00"; el.m.textContent="00"; el.s.textContent="00";
-          var when = document.getElementById("when");
-          when.innerHTML = '<span class="dot"></span><span><strong>Ci siamo!</strong> Stiamo aprendo le porte…</span>';
-          document.getElementById("cta").style.display = "inline-block";
-          // Dopo il lancio il sito completo sostituisce questa pagina: ricarica per intercettarlo.
-          if (!firedReload){ firedReload = true; setInterval(function(){ location.reload(); }, 30000); }
-          return;
-        }
-        var dd = Math.floor(diff/86400000);
-        var hh = Math.floor(diff%86400000/3600000);
-        var mm = Math.floor(diff%3600000/60000);
-        var ss = Math.floor(diff%60000/1000);
-        el.d.textContent = pad(dd); el.h.textContent = pad(hh); el.m.textContent = pad(mm); el.s.textContent = pad(ss);
-      }
-      tick(); setInterval(tick, 1000);
-    })();
-  </script>
+  <script src="countdown.js"></script>
 </body>
 </html>
