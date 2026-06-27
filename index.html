@@ -2,7 +2,7 @@
 <html lang="it">
 <head>
   <meta charset="UTF-8" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; script-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-ancestors 'none'; upgrade-insecure-requests" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; script-src 'self'; connect-src 'self' https://api.jammate.it; base-uri 'none'; form-action 'none'; object-src 'none'; frame-ancestors 'none'; upgrade-insecure-requests" />
   <meta name="referrer" content="no-referrer" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="theme-color" content="#0b0c14" />
@@ -143,6 +143,43 @@
       box-shadow:0 10px 34px rgba(139,108,255,.45),inset 0 1px 0 rgba(255,255,255,.25)}
     .stage.is-live .enter{display:inline-block}
 
+    /* ── Waitlist "avvisami al lancio" ────────────────────────────────────── */
+    /* Nascosto finché un ping non conferma che l'endpoint è attivo (vedi countdown.js). */
+    .notify{display:none;flex-direction:column;align-items:center;gap:12px;
+      width:100%;max-width:440px;margin-top:2px}
+    .notify.live{display:flex}
+    .stage.is-live .notify{display:none}
+    .ea-badge{display:inline-flex;align-items:center;gap:8px;
+      font-family:var(--mono);font-size:11px;letter-spacing:.22em;text-transform:uppercase;
+      padding:6px 13px;border-radius:999px;border:1px solid var(--line);background:rgba(22,26,43,.55)}
+    .ea-badge .ea-txt{background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent;font-weight:600}
+    .ea-badge .ea-dot{width:7px;height:7px;border-radius:50%;background:var(--grad);box-shadow:0 0 9px rgba(255,92,157,.75)}
+    .notify-h{font-size:clamp(14px,1.9vw,16px);font-weight:600;color:var(--text);letter-spacing:-.01em}
+    .notify-row{display:flex;gap:8px;width:100%}
+    .notify input[type=email]{flex:1;min-width:0;height:48px;padding:0 16px;
+      font:inherit;font-size:15px;color:var(--text);
+      background:rgba(22,26,43,.6);border:1px solid var(--line);border-radius:14px;
+      outline:none;transition:border-color .15s,box-shadow .15s}
+    .notify input[type=email]::placeholder{color:var(--faint)}
+    .notify input[type=email]:focus{border-color:var(--accent);
+      box-shadow:0 0 0 3px rgba(139,108,255,.22)}
+    .notify button{flex:0 0 auto;height:48px;padding:0 22px;cursor:pointer;
+      font:inherit;font-weight:700;font-size:15px;color:#fff;border:0;border-radius:14px;
+      background:var(--grad);box-shadow:0 8px 26px rgba(139,108,255,.4),inset 0 1px 0 rgba(255,255,255,.25);
+      transition:transform .12s,filter .15s}
+    .notify button:hover{filter:brightness(1.06)}
+    .notify button:active{transform:scale(.97)}
+    .notify button:disabled{opacity:.6;cursor:default;transform:none}
+    .consent{display:flex;align-items:flex-start;gap:9px;text-align:left;
+      font-size:12.5px;line-height:1.4;color:var(--muted);cursor:pointer}
+    .consent input{margin-top:2px;width:16px;height:16px;flex:0 0 auto;accent-color:var(--accent);cursor:pointer}
+    .consent b{color:var(--text);font-weight:600}
+    .notify-msg{min-height:18px;font-size:13px;letter-spacing:.01em;margin:0;color:var(--muted)}
+    .notify-msg.ok{color:var(--accent-2);font-weight:600}
+    .notify-msg.warn{color:#ffb454}
+    .notify.ok .notify-row,.notify.ok .consent,.notify.ok .notify-h{display:none}
+    @media (max-width:560px){ .notify-row{flex-direction:column} .notify button{height:46px} }
+
     .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
       clip:rect(0,0,0,0);white-space:nowrap;border:0}
 
@@ -227,6 +264,21 @@
     </section>
 
     <div class="coord"><i class="pin"></i> GO-LIVE &nbsp;&middot;&nbsp; 29.06.2026 &nbsp;&middot;&nbsp; 21:00 CEST &nbsp;&middot;&nbsp; MILANO</div>
+
+    <form class="notify" id="notify" novalidate>
+      <div class="ea-badge"><i class="ea-dot"></i><span class="ea-txt">Early Adopter</span></div>
+      <label class="notify-h" for="wl-email">Iscriviti ora: i primi ricevono il badge <b>Early Adopter</b> sul profilo.</label>
+      <div class="notify-row">
+        <input id="wl-email" name="email" type="email" inputmode="email" autocomplete="email"
+               placeholder="la-tua@email.it" aria-label="La tua email" required />
+        <button type="submit" id="notifyBtn">Avvisami</button>
+      </div>
+      <label class="consent">
+        <input type="checkbox" id="wl-consent" required />
+        <span>Acconsento a ricevere <b>un'unica email</b> di avviso al lancio. Niente spam &middot; dati in UE &middot; cancellazione su richiesta.</span>
+      </label>
+      <p class="notify-msg" id="notifyMsg" role="status" aria-live="polite"></p>
+    </form>
 
     <a class="enter" id="enter" href="/">Entra &rarr;</a>
   </main>

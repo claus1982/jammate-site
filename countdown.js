@@ -101,9 +101,57 @@
     }
   }
 
+  // ── Waitlist "avvisami al lancio" ─────────────────────────────────────────
+  function initNotify() {
+    var form = $("notify");
+    if (!form) return;
+    var email = $("wl-email"), consent = $("wl-consent"),
+        btn = $("notifyBtn"), msg = $("notifyMsg");
+    var API = "https://api.jammate.it/v1/waitlist";
+    var EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    var done = false;
+    function setMsg(t, cls) { msg.textContent = t; msg.className = "notify-msg" + (cls ? " " + cls : ""); }
+
+    // Mostra il form SOLO se l'endpoint è attivo (ping GET). Prima del deploy del backend
+    // resta nascosto → niente form rotto; comparirà da solo appena l'API è online.
+    fetch(API, { method: "GET" })
+      .then(function (r) { if (r.ok) form.classList.add("live"); })
+      .catch(function () { /* endpoint non attivo: form resta nascosto */ });
+
+    form.addEventListener("submit", function (e) {
+      e.preventDefault();
+      if (done) return;
+      var val = (email.value || "").trim();
+      if (!EMAIL_RE.test(val) || val.length > 254) { setMsg("Controlla l'indirizzo email.", "warn"); email.focus(); return; }
+      if (!consent.checked) { setMsg("Spunta il consenso per ricevere l'avviso.", "warn"); return; }
+
+      btn.disabled = true; setMsg("Invio…", "");
+      fetch(API, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: val, consent: true, source: "coming-soon", locale: (navigator.language || "it").slice(0, 12) })
+      }).then(function (res) {
+        if (res.ok) {
+          done = true; form.classList.add("ok");
+          setMsg("Ci sei: sei un Early Adopter. Ti scriviamo appena andiamo in fase. ✦", "ok");
+        } else if (res.status === 400) {
+          setMsg("Email non valida o consenso mancante.", "warn"); btn.disabled = false;
+        } else if (res.status === 429) {
+          setMsg("Troppi tentativi, riprova tra poco.", "warn"); btn.disabled = false;
+        } else {
+          // Endpoint non ancora attivo (pre-deploy) o errore lato server.
+          setMsg("Le iscrizioni aprono a breve — riprova tra poco.", "warn"); btn.disabled = false;
+        }
+      }).catch(function () {
+        setMsg("Connessione assente — riprova tra poco.", "warn"); btn.disabled = false;
+      });
+    });
+  }
+
   function start() {
     buildWaves();
     buildLadder();
+    initNotify();
     tick();
     setInterval(tick, 1000);
   }
