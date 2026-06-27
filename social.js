@@ -1307,16 +1307,17 @@ function slotsOverlap(d1, t1, d2, t2) {
 }
 function openBookLesson(t, s) {
   const fee = t.hourly, comm = Math.round(fee * 0.1);
+  const production = typeof isProductionRuntime === "function" && isProductionRuntime();
   openModal(`
     <h2>${ic('graduation-cap')} ${esc(window.t("social.book_lesson"))}</h2>
     <div class="aff-note">${esc(t.name)} · ${ic('calendar')} ${formatDate(s.date)} · ${esc(s.time)}</div>
     <div class="card flat" style="margin-top:12px">
       <div class="row-between"><span>${esc(window.t("social.lesson_one_hour"))}</span><b>${fee}€</b></div>
-      <div class="row-between"><span class="loc">${esc(window.t("social.commission_line"))}</span><span class="loc">${comm}€</span></div>
+      ${production ? "" : `<div class="row-between"><span class="loc">${esc(window.t("social.commission_line"))}</span><span class="loc">${comm}€</span></div>`}
     </div>
     ${t.online ? `<div class="aff-note" style="margin-top:10px"><span class="badge-online">${ic('video')} ${esc(window.t("social.online"))}</span> ${window.t("social.online_lesson_note")}</div>` : ""}
-    <div class="aff-note" style="margin-top:10px">${window.t("social.payment_simulated_note")}</div>
-    <button class="btn" id="payLesson" style="margin-top:14px">${ic('check')} ${window.t("social.pay_and_book", { fee })}</button>
+    ${production ? "" : `<div class="aff-note" style="margin-top:10px">${window.t("social.payment_simulated_note")}</div>`}
+    <button class="btn" id="payLesson" style="margin-top:14px">${ic('check')} ${production ? esc(window.t("social.book_lesson")) : window.t("social.pay_and_book", { fee })}</button>
   `);
   $("#payLesson").onclick = async () => {
     // clash-check su intervalli [time, time+60min] (sovrapposizioni parziali, non solo data+ora esatte).
@@ -1346,14 +1347,14 @@ function openBookLesson(t, s) {
     openModal(`
       <div style="text-align:center">
         <div class="vl-badge">${ic('check')} ${esc(window.t("social.lesson_booked"))}</div>
-        <h2 style="margin-top:8px">${esc(window.t("social.payment_confirmed"))}</h2>
+        <h2 style="margin-top:8px">${esc(production ? window.t("social.lesson_booked") : window.t("social.payment_confirmed"))}</h2>
         <div class="loc">${ic('calendar')} ${formatDate(s.date)} · ${esc(s.time)} · ${window.t("social.with_name", { name: esc(t.name.split(" ")[0]) })}</div>
       </div>
       <div class="card flat" style="margin-top:14px">
         <div class="row-between"><span>${esc(window.t("social.amount"))}</span><b>${fee}€</b></div>
-        <div class="row-between"><span class="loc">${esc(window.t("social.commission_jammate"))}</span><span class="loc">${comm}€</span></div>
+        ${production ? "" : `<div class="row-between"><span class="loc">${esc(window.t("social.commission_jammate"))}</span><span class="loc">${comm}€</span></div>`}
         <div class="row-between"><span class="loc">${esc(window.t("social.transaction"))}</span><span class="loc">${esc(payment.txnId)}</span></div>
-        <div class="row-between"><span class="loc">${esc(window.t("social.status"))}</span><span class="loc">${ic('check')} ${esc(window.t("social.paid_simulated"))}</span></div>
+        <div class="row-between"><span class="loc">${esc(window.t("social.status"))}</span><span class="loc">${ic('check')} ${esc(production ? window.t("social.lesson_booked") : window.t("social.paid_simulated"))}</span></div>
       </div>
       ${t.online ? `<button class="btn" id="rcVideo" style="margin-top:14px">${ic('video')} ${esc(window.t("social.open_video_lesson"))}</button>` : ""}
       <button class="btn secondary" id="rcClose" style="margin-top:10px">${esc(window.t("social.close"))}</button>
