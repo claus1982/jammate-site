@@ -10,10 +10,10 @@
 // ------------------------------------------------------------- Helper comuni
 function timeAgo(ts) {
   const s = Math.floor((Date.now() - ts) / 1000);
-  if (s < 60) return "ora";
-  const m = Math.floor(s / 60); if (m < 60) return m + " min fa";
-  const h = Math.floor(m / 60); if (h < 24) return h + " h fa";
-  const d = Math.floor(h / 24); if (d < 7) return d + " g fa";
+  if (s < 60) return t("social.time_now");
+  const m = Math.floor(s / 60); if (m < 60) return t("social.time_min_ago", { n: m });
+  const h = Math.floor(m / 60); if (h < 24) return t("social.time_h_ago", { n: h });
+  const d = Math.floor(h / 24); if (d < 7) return t("social.time_d_ago", { n: d });
   try { return new Date(ts).toLocaleDateString("it-IT", { day: "numeric", month: "short" }); } catch (e) { return ""; }
 }
 // Selettore immagine generico → dataURL. Le GIF vengono mantenute così come sono
@@ -27,7 +27,7 @@ function pickImage(cb, maxDim) {
     const rd = new FileReader();
     rd.onload = () => {
       if (f.type === "image/gif") { // GIF: niente canvas, mantieni l'animazione
-        if (rd.result.length > 6000000) { toast("GIF troppo pesante (max ~4MB)"); inp.remove(); return; }
+        if (rd.result.length > 6000000) { toast(t("social.gif_too_heavy")); inp.remove(); return; }
         cb(rd.result); inp.remove(); return;
       }
       const img = new Image();
@@ -36,10 +36,10 @@ function pickImage(cb, maxDim) {
         const w = Math.round(img.width * r), h = Math.round(img.height * r);
         const c = document.createElement("canvas"); c.width = w; c.height = h;
         c.getContext("2d").drawImage(img, 0, 0, w, h);
-        try { cb(c.toDataURL("image/jpeg", 0.8)); } catch (e) { console.warn("JamMate: immagine non elaborabile", e); toast("Immagine non valida", ic('alert-triangle'), { error: true }); }
+        try { cb(c.toDataURL("image/jpeg", 0.8)); } catch (e) { console.warn("JamMate: immagine non elaborabile", e); toast(t("social.image_invalid"), ic('alert-triangle'), { error: true }); }
         inp.remove();
       };
-      img.onerror = () => { console.warn("JamMate: immagine non caricabile"); toast("Immagine non valida", ic('alert-triangle'), { error: true }); inp.remove(); };
+      img.onerror = () => { console.warn("JamMate: immagine non caricabile"); toast(t("social.image_invalid"), ic('alert-triangle'), { error: true }); inp.remove(); };
       img.src = rd.result;
     };
     rd.readAsDataURL(f);
@@ -67,7 +67,16 @@ function reactionSummary(p) {
   const emojis = Object.keys(counts).filter(e => counts[e] > 0).sort((a, b) => counts[b] - counts[a]);
   return { emojis: emojis.slice(0, 3), total: emojis.reduce((s, e) => s + counts[e], 0) };
 }
-function setReaction(p, emoji) { normReactions(p); p.myReaction = p.myReaction === emoji ? null : emoji; save(); }
+function setReaction(p, emoji) {
+  normReactions(p);
+  p.myReaction = p.myReaction === emoji ? null : emoji;
+  save();
+  if (typeof isProductionRuntime === "function" && isProductionRuntime()) {
+    JM.Api.posts.react(p.id, p.myReaction).catch((error) =>
+      toast(error.message || "Reazione non salvata", ic("alert-triangle"), { error: true })
+    );
+  }
+}
 
 // ------------------------------------------------------------- Notifiche (#10)
 function notify(icon, text, opts) {
@@ -84,12 +93,12 @@ function notifIcon(v) {
 function notifRow(n) {
   return `<div class="notif-row${n.view ? " tap" : ""}${n.read ? "" : " unread"}"${n.view ? ` data-view="${esc(n.view)}"` : ""}>
     <span class="notif-icon">${notifIcon(n.icon)}</span>
-    <div>${n.read ? "" : `<span class="sr-only">Non letta. </span>`}<div>${esc(n.text)}</div><div class="notif-time">${timeAgo(n.ts)}</div></div></div>`;
+    <div>${n.read ? "" : `<span class="sr-only">${esc(t("social.notif_unread"))}</span>`}<div>${esc(n.text)}</div><div class="notif-time">${timeAgo(n.ts)}</div></div></div>`;
 }
 function openNotifications() {
   const list = state.notifications || [];
-  openModal(`<div class="row-between modal-head"><h2 style="margin:0">${ic("bell")} Notifiche</h2>${list.length ? `<button class="btn small secondary" id="clearNotif">Pulisci</button>` : ""}</div>
-    <div id="notifList" style="margin-top:12px">${list.length ? list.map(notifRow).join("") : `<div class="empty">${illus("quiet")}Nessuna notifica per ora.</div>`}</div>`);
+  openModal(`<div class="row-between modal-head"><h2 style="margin:0">${ic("bell")} ${esc(t("social.notifications"))}</h2>${list.length ? `<button class="btn small secondary" id="clearNotif">${esc(t("social.clear"))}</button>` : ""}</div>
+    <div id="notifList" style="margin-top:12px">${list.length ? list.map(notifRow).join("") : `<div class="empty">${illus("quiet")}${esc(t("social.no_notifications"))}</div>`}</div>`);
   document.querySelectorAll("#notifList [data-view]").forEach(r => r.onclick = () => { closeModal(); navigate(r.dataset.view); });
   if ($("#clearNotif")) $("#clearNotif").onclick = () => { state.notifications = []; save(); updateBell(); closeModal(); };
   // segna tutte come lette all'apertura
@@ -102,14 +111,14 @@ const REACTIONS = ["👍", "❤️", "🔥", "😂", "🎸", "👏", "😮"];
 const POST_EMOJIS = ["🎸", "🎹", "🥁", "🎤", "🎷", "🎺", "🎻", "🎶", "🎵", "🔥", "❤️", "😂", "😍", "🤘", "👏", "🙌", "✨", "🍺", "📅", "📍", "🎉", "😎", "💯", "🚀"];
 // Tipi di post "della scena": danno al feed un taglio musicale riconoscibile.
 const POST_TYPES = [
-  { k: "", label: "Generale", icon: "music-note" },
-  { k: "jam", label: "Jam", icon: "suonate" },
-  { k: "live", label: "Live", icon: "megaphone" },
-  { k: "traguardo", label: "Traguardo", icon: "star" },
-  { k: "cerco", label: "Cerco", icon: "search" }
+  { k: "", labelKey: "social.posttype_general", icon: "music-note" },
+  { k: "jam", labelKey: "social.posttype_jam", icon: "suonate" },
+  { k: "live", labelKey: "social.posttype_live", icon: "megaphone" },
+  { k: "traguardo", labelKey: "social.posttype_milestone", icon: "star" },
+  { k: "cerco", labelKey: "social.posttype_seeking", icon: "search" }
 ];
 function postTypeMeta(k) { return POST_TYPES.find(t => t.k === (k || "")) || POST_TYPES[0]; }
-const FEED_TABS = [{ k: "perte", label: "Per te" }, { k: "recenti", label: "Recenti" }, { k: "vicino", label: "Vicino a te" }];
+const FEED_TABS = [{ k: "perte", labelKey: "social.tab_foryou" }, { k: "recenti", labelKey: "social.tab_recent" }, { k: "vicino", labelKey: "social.tab_nearby" }];
 
 const SEED_POSTS = [
   { id: "sp1", authorId: "u2", type: "live", name: "Giulia Ferri", avatar: "🎤", color: GRADS[4], text: "Ieri sera prima serata con la nuova cover band 🎶 pubblico fantastico, grazie a tutti! Prossima data tra due settimane. #live #coverband", image: "", ts: Date.now() - 3 * 3600e3, reactions: { "🔥": 9, "❤️": 4, "👏": 3 }, myReaction: null, comments: [{ name: "Luca Greco", text: "Grandi! 🔥", ts: Date.now() - 2 * 3600e3 }] },
@@ -146,7 +155,8 @@ function feedPosts(tab) {
   tab = tab || (state.ui && state.ui.feedTab) || "perte";
   const live = state.posts || [];
   const liveIds = new Set(live.map(p => p.id));
-  let list = [...live, ...SEED_POSTS.filter(s => !liveIds.has(s.id))];
+  const seedPosts = (typeof isProductionRuntime === "function" && isProductionRuntime()) ? [] : SEED_POSTS;
+  let list = [...live, ...seedPosts.filter(s => !liveIds.has(s.id))];
   list = list.concat(jamEventPosts().filter(j => !liveIds.has(j.id)));
   const hf = state.ui && state.ui.feedTag;
   if (hf) list = list.filter(p => (p.text || "").toLowerCase().includes("#" + hf.toLowerCase()));
@@ -186,39 +196,39 @@ function renderFeed(app) {
   state.ui = state.ui || {};
   state.ui.feedTab = state.ui.feedTab || "perte";
   app.appendChild(el(`<div>
-    <div class="row-between"><h1 class="view-title">Feed ${ic('chat-bubble', 'accent')}</h1>
-      <button class="btn small secondary" id="feedRefresh" type="button" aria-label="Aggiorna il feed">${ic('refresh')} Aggiorna</button></div>
-    <p class="view-sub">Cosa succede nella tua scena musicale: jam, prove, serate, traguardi.</p>
+    <div class="row-between"><h1 class="view-title">${esc(t("social.feed_title"))} ${ic('chat-bubble', 'accent')}</h1>
+      <button class="btn small secondary" id="feedRefresh" type="button" aria-label="${esc(t("social.feed_refresh_aria"))}">${ic('refresh')} ${esc(t("social.refresh"))}</button></div>
+    <p class="view-sub">${esc(t("social.feed_sub"))}</p>
     <div class="card flat" id="composer">
-      <div class="card-head">${avatarTag(state.me)}<div class="meta"><div class="name">${esc(state.me.name || "Tu")}</div></div></div>
-      <div class="chips composer-types" id="postTypes">${POST_TYPES.map(t => `<span class="chip${t.k === "" ? " on" : ""}" data-chip="${t.k}" data-ptype="${t.k}">${ic(t.icon)} ${t.label}</span>`).join("")}</div>
-      <textarea id="postText" placeholder="Condividi qualcosa con la community… usa #hashtag"></textarea>
+      <div class="card-head">${avatarTag(state.me)}<div class="meta"><div class="name">${esc(state.me.name || t("social.you"))}</div></div></div>
+      <div class="chips composer-types" id="postTypes">${POST_TYPES.map(pt => `<span class="chip${pt.k === "" ? " on" : ""}" data-chip="${pt.k}" data-ptype="${pt.k}">${ic(pt.icon)} ${esc(t(pt.labelKey))}</span>`).join("")}</div>
+      <textarea id="postText" placeholder="${esc(t("social.composer_placeholder"))}"></textarea>
       <div class="emoji-bar" id="emojiBar" hidden>${POST_EMOJIS.map(e => `<button type="button" data-e="${e}">${e}</button>`).join("")}</div>
       <div id="postPreview"></div>
       <div id="jamAttach"></div>
       <div class="composer-actions">
         <div class="composer-tools">
-          <button class="btn small secondary composer-tool" id="postEmoji" type="button" aria-expanded="false">${ic('face-neutral')} Emoji</button>
-          <button class="btn small secondary composer-tool" id="postPhoto" type="button">${ic('camera')} Foto</button>
-          <button class="btn small secondary composer-tool" id="postJam" type="button">${ic('microphone')} Allega jam</button>
+          <button class="btn small secondary composer-tool" id="postEmoji" type="button" aria-expanded="false">${ic('face-neutral')} ${esc(t("social.emoji"))}</button>
+          <button class="btn small secondary composer-tool" id="postPhoto" type="button">${ic('camera')} ${esc(t("social.photo"))}</button>
+          <button class="btn small secondary composer-tool" id="postJam" type="button">${ic('microphone')} ${esc(t("social.attach_jam"))}</button>
         </div>
-        <button class="btn small composer-send" id="postSend" type="button">${ic('send')} Pubblica</button>
+        <button class="btn small composer-send" id="postSend" type="button">${ic('send')} ${esc(t("social.publish"))}</button>
       </div>
     </div>
-    <div class="segmented" id="feedTabs">${FEED_TABS.map(t => `<button data-ft="${t.k}" class="${state.ui.feedTab === t.k ? "on" : ""}">${esc(t.label)}</button>`).join("")}</div>
+    <div class="segmented" id="feedTabs">${FEED_TABS.map(ft => `<button data-ft="${ft.k}" class="${state.ui.feedTab === ft.k ? "on" : ""}">${esc(t(ft.labelKey))}</button>`).join("")}</div>
     <div id="feedFilterBar"></div>
     <div id="feedList"></div>
   </div>`));
   let pendingImgs = [], pendingType = "", pendingJam = null;
   const paintComposerImgs = () => {
     const box = $("#postPreview");
-    box.innerHTML = pendingImgs.length ? `<div class="composer-thumbs">${pendingImgs.map((d, i) => `<div class="composer-thumb"><img src="${esc(safeImg(d))}" alt="anteprima"><button type="button" data-rm="${i}" aria-label="Rimuovi">${ic('x')}</button></div>`).join("")}</div>` : "";
+    box.innerHTML = pendingImgs.length ? `<div class="composer-thumbs">${pendingImgs.map((d, i) => `<div class="composer-thumb"><img src="${esc(safeImg(d))}" alt="${esc(t("social.preview"))}"><button type="button" data-rm="${i}" aria-label="${esc(t("social.remove"))}">${ic('x')}</button></div>`).join("")}</div>` : "";
     box.querySelectorAll("[data-rm]").forEach(b => b.onclick = () => { pendingImgs.splice(+b.dataset.rm, 1); paintComposerImgs(); });
   };
   const paintJamAttach = () => {
     const box = $("#jamAttach");
     if (!pendingJam) { box.innerHTML = ""; return; }
-    box.innerHTML = `<div class="jam-embed"><span class="je-ic">${ic('microphone')}</span><div class="je-meta"><b>${esc(pendingJam.title)}</b><span>${ic('calendar')} ${formatDate(pendingJam.date)} · ${esc(pendingJam.place || "")}</span></div><button type="button" data-rmjam aria-label="Togli jam">${ic('x')}</button></div>`;
+    box.innerHTML = `<div class="jam-embed"><span class="je-ic">${ic('microphone')}</span><div class="je-meta"><b>${esc(pendingJam.title)}</b><span>${ic('calendar')} ${formatDate(pendingJam.date)} · ${esc(pendingJam.place || "")}</span></div><button type="button" data-rmjam aria-label="${esc(t("social.remove_jam"))}">${ic('x')}</button></div>`;
     box.querySelector("[data-rmjam]").onclick = () => { pendingJam = null; paintJamAttach(); };
   };
   $("#postTypes").querySelectorAll("[data-ptype]").forEach(c => c.onclick = () => {
@@ -227,22 +237,35 @@ function renderFeed(app) {
   });
   $("#postEmoji").onclick = () => { const b = $("#emojiBar"); b.hidden = !b.hidden; $("#postEmoji").setAttribute("aria-expanded", b.hidden ? "false" : "true"); };
   $("#emojiBar").querySelectorAll("[data-e]").forEach(b => b.onclick = () => insertAtCursor($("#postText"), b.dataset.e));
-  $("#postPhoto").onclick = () => { if (pendingImgs.length >= 4) return toast("Massimo 4 immagini per post"); pickImage(d => { pendingImgs.push(d); paintComposerImgs(); }); };
+  $("#postPhoto").onclick = () => { if (pendingImgs.length >= 4) return toast(t("social.max_images")); pickImage(d => { pendingImgs.push(d); paintComposerImgs(); }); };
   $("#postJam").onclick = () => openJamPicker(j => { pendingJam = j; paintJamAttach(); });
-  $("#postSend").onclick = () => {
+  $("#postSend").onclick = async () => {
     const text = $("#postText").value.trim();
-    if (!text && !pendingImgs.length && !pendingJam) return toast("Scrivi qualcosa, aggiungi una foto o allega una jam");
+    if (!text && !pendingImgs.length && !pendingJam) return toast(t("social.empty_post"));
     const me = state.me;
     state.posts = state.posts || [];
-    const post = { id: "p" + Date.now(), authorId: "me", type: pendingType, name: me.name || "Tu", avatar: me.avatar, color: me.color, photo: me.photo || "", text, images: pendingImgs.slice(), jamId: pendingJam ? pendingJam.id : null, ts: Date.now(), reactions: {}, myReaction: null, comments: [] };
+    let remote = null;
+    if (typeof isProductionRuntime === "function" && isProductionRuntime()) {
+      try {
+        let image = null;
+        if (pendingImgs.length) {
+          const blob = await (await fetch(pendingImgs[0])).blob();
+          image = (await JM.Api.media.upload(blob)).key;
+        }
+        remote = await JM.Api.posts.create({ text: text || (pendingJam ? pendingJam.title : ""), image });
+      } catch (error) {
+        return toast(error.message || "Pubblicazione non riuscita", ic("alert-triangle"), { error: true });
+      }
+    }
+    const post = { id: remote ? remote.id : "p" + Date.now(), authorId: me.id || "me", type: pendingType, name: me.name || t("social.you"), avatar: me.avatar, color: me.color, photo: me.photo || "", text, images: pendingImgs.slice(), jamId: pendingJam ? pendingJam.id : null, ts: remote ? new Date(remote.ts).getTime() : Date.now(), reactions: {}, myReaction: null, comments: [] };
     state.posts.unshift(post);
     const durable = save(); // se non durevole save() ha già avvisato: il post resta in sessione, non lo scartiamo
     $("#postText").value = ""; pendingImgs = []; pendingJam = null; pendingType = ""; paintComposerImgs(); paintJamAttach();
     $("#postTypes").querySelectorAll(".chip").forEach((x, i) => { x.classList.toggle("on", i === 0); x.setAttribute("aria-pressed", i === 0 ? "true" : "false"); });
-    if (durable) toast("Pubblicato", ic('celebration', 'accent')); // altrimenti resta visibile l'avviso "spazio esaurito"
+    if (durable) toast(t("social.published"), ic('celebration', 'accent')); // altrimenti resta visibile l'avviso "spazio esaurito"
     haptic("Light");
     setFeedTab("recenti");
-    simulateEngagement(post.id);
+    if (!(typeof isProductionRuntime === "function" && isProductionRuntime())) simulateEngagement(post.id);
   };
   $("#feedTabs").querySelectorAll("[data-ft]").forEach(b => b.onclick = () => setFeedTab(b.dataset.ft));
   if ($("#feedRefresh")) $("#feedRefresh").onclick = () => { if (typeof runRefresh === "function") runRefresh("feed"); };
@@ -254,15 +277,15 @@ function renderFeed(app) {
 function openJamPicker(cb) {
   const today = todayISO();
   const jams = allJams().filter(j => j.date >= today);
-  openModal(`<h2>${ic('microphone')} Allega una jam</h2><p class="view-sub">Mostra una jam dentro il tuo post.</p>
-    <div id="jpList">${jams.length ? jams.map(j => `<button class="jam-pick" type="button" data-j="${esc(j.id)}"><b>${esc(j.title)}</b><span>${ic('calendar')} ${formatDate(j.date)} · ${esc(j.place || "")}</span></button>`).join("") : `<div class="empty">${illus("quiet")}Nessuna jam in programma.</div>`}</div>`);
+  openModal(`<h2>${ic('microphone')} ${esc(t("social.attach_a_jam"))}</h2><p class="view-sub">${esc(t("social.attach_jam_sub"))}</p>
+    <div id="jpList">${jams.length ? jams.map(j => `<button class="jam-pick" type="button" data-j="${esc(j.id)}"><b>${esc(j.title)}</b><span>${ic('calendar')} ${formatDate(j.date)} · ${esc(j.place || "")}</span></button>`).join("") : `<div class="empty">${illus("quiet")}${esc(t("social.no_jams_scheduled"))}</div>`}</div>`);
   $("#jpList").querySelectorAll("[data-j]").forEach(b => b.onclick = () => { const j = allJams().find(x => x.id === b.dataset.j); closeModal(); if (j) cb(j); });
 }
 
 function renderFeedFilterBar() {
   const box = $("#feedFilterBar"); if (!box) return;
   const hf = state.ui && state.ui.feedTag;
-  box.innerHTML = hf ? `<div class="ad-foryou" style="margin-top:10px">${ic('search', 'accent')}<span>Filtro: <b>#${esc(hf)}</b></span><button class="btn small" id="clrTag" type="button">Tutti</button></div>` : "";
+  box.innerHTML = hf ? `<div class="ad-foryou" style="margin-top:10px">${ic('search', 'accent')}<span>${esc(t("social.filter_label"))} <b>#${esc(hf)}</b></span><button class="btn small" id="clrTag" type="button">${ic('list')} ${esc(t("social.all"))}</button></div>` : "";
   if (hf) $("#clrTag").onclick = () => { state.ui.feedTag = null; save(); renderFeedFilterBar(); renderFeedBody(); };
 }
 
@@ -270,21 +293,21 @@ function renderFeedFilterBar() {
 // profilazione né dati art. 9. Bassa frequenza, mai nel deck Scopri, soppressi per gli utenti Pro.
 // Lo slot è pronto a ospitare campagne vendute col backend (stesso formato/etichetta/cap).
 const HOUSE_PROMOS = [
-  { id: "pro", icon: "resonance-profile", title: "JamMate Pro", body: "Niente pubblicità, più visibilità in Scopri e Sintonia avanzata. Sostieni un'app indipendente.", cta: "Passa a Pro", go: () => { if (typeof openPro === "function") openPro(); } },
-  { id: "venue", icon: "building", title: "Hai un locale o una sala prova?", body: "Diventa Founding Venue: pubblica le tue serate e trova band, zero commissione all'inizio.", cta: "Scopri", go: () => navigate("palco") },
-  { id: "lessons", icon: "graduation-cap", title: "Vuoi fare un salto di livello?", body: "Trova un insegnante vicino a te e prenota la prima lezione.", cta: "Vedi lezioni", go: () => navigate("lessons") }
+  { id: "pro", icon: "resonance-profile", titleKey: "social.promo_pro_title", bodyKey: "social.promo_pro_body", ctaKey: "social.promo_pro_cta", go: () => { if (typeof openPro === "function") openPro(); } },
+  { id: "venue", icon: "building", titleKey: "social.promo_venue_title", bodyKey: "social.promo_venue_body", ctaKey: "social.promo_venue_cta", go: () => navigate("palco") },
+  { id: "lessons", icon: "graduation-cap", titleKey: "social.promo_lessons_title", bodyKey: "social.promo_lessons_body", ctaKey: "social.promo_lessons_cta", go: () => navigate("lessons") }
 ];
 const _promoDismissed = {}; // per-sessione: id promo che l'utente ha nascosto
 function houseAdCard(promo) {
   const c = el(`<div class="card post promo-card" data-promo="${esc(promo.id)}">
-    <div class="promo-head"><span class="promo-tag">Promosso</span><button type="button" class="promo-info" aria-label="Perché vedo questo contenuto?">${ic('info')}</button></div>
+    <div class="promo-head"><span class="promo-tag">${esc(t("social.promoted"))}</span><button type="button" class="promo-info" aria-label="${esc(t("social.why_this_content"))}">${ic('info')}</button></div>
     <div class="card-head"><span class="avatar promo-av">${ic(promo.icon)}</span><div class="meta">
-      <div class="name">${esc(promo.title)}</div><div class="loc">JamMate</div></div></div>
-    <div class="post-text">${esc(promo.body)}</div>
-    <div class="post-actions"><button class="btn small" data-cta type="button">${esc(promo.cta)}</button><button class="post-act" data-hide type="button">${ic('x')} Nascondi</button></div>
+      <div class="name">${esc(t(promo.titleKey))}</div><div class="loc">JamMate</div></div></div>
+    <div class="post-text">${esc(t(promo.bodyKey))}</div>
+    <div class="post-actions"><button class="btn small" data-cta type="button">${esc(t(promo.ctaKey))}</button><button class="post-act" data-hide type="button">${ic('x')} ${esc(t("social.hide"))}</button></div>
   </div>`);
   c.querySelector("[data-cta]").onclick = () => { if (typeof promo.go === "function") promo.go(); };
-  c.querySelector(".promo-info").onclick = () => toast("Contenuto promozionale di JamMate. Pubblicità contestuale: nessun dato personale o di personalità è usato per mostrartelo.", ic('info'));
+  c.querySelector(".promo-info").onclick = () => toast(t("social.promo_info"), ic('info'));
   c.querySelector("[data-hide]").onclick = () => { _promoDismissed[promo.id] = true; renderFeedBody(); };
   return c;
 }
@@ -293,7 +316,7 @@ function renderFeedBody() {
   box.innerHTML = "";
   const list = feedPosts();
   if (!list.length) {
-    box.innerHTML = `<div class="empty">${illus("quiet")}${state.ui && state.ui.feedTag ? "Nessun post con #" + esc(state.ui.feedTag) + "." : (state.ui && state.ui.feedTab === "vicino" ? "Nessun post vicino a te per ora." : "Ancora niente qui. Pubblica il primo post!")}</div>`;
+    box.innerHTML = `<div class="empty">${illus("quiet")}${state.ui && state.ui.feedTag ? t("social.no_posts_tag", { tag: esc(state.ui.feedTag) }) : (state.ui && state.ui.feedTab === "vicino" ? esc(t("social.no_posts_nearby")) : esc(t("social.no_posts_yet")))}</div>`;
     return;
   }
   const isPro = state.me && state.me.plan === "pro";
@@ -318,7 +341,7 @@ function openAuthorProfile(p) {
   if (!p.authorId || p.authorId === "me") { navigate("profile"); return; }
   const prof = (state.profiles || []).find(x => x.id === p.authorId);
   if (prof && typeof openProfileSheet === "function") return openProfileSheet(prof);
-  toast("Profilo non disponibile.");
+  toast(t("social.profile_unavailable"));
 }
 // Carosello foto in stile Instagram: frecce, pallini, conteggio e swipe.
 function wirePostCarousel(root, count) {
@@ -351,7 +374,10 @@ function reactionFace(s) { return (s.emojis.length ? s.emojis.join("") : ic('hea
 function jamEmbedHtml(j) {
   return `<button class="jam-embed tap" type="button" data-jamopen="${esc(j.id)}"><span class="je-ic">${ic('microphone')}</span><div class="je-meta"><b>${esc(j.title)}</b><span>${ic('calendar')} ${formatDate(j.date)} · ${esc(j.place || "")}</span></div><span class="je-go">${ic('arrow-up')}</span></button>`;
 }
-function findPostById(id) { return (state.posts || []).find(p => p.id === id) || SEED_POSTS.find(p => p.id === id) || jamEventPosts().find(p => p.id === id) || null; }
+function findPostById(id) {
+  const seeds = (typeof isProductionRuntime === "function" && isProductionRuntime()) ? [] : SEED_POSTS;
+  return (state.posts || []).find(p => p.id === id) || seeds.find(p => p.id === id) || jamEventPosts().find(p => p.id === id) || null;
+}
 // Aggiorna UNA sola card. Se c'è un'interazione in corso (commento in scrittura, picker reazioni
 // aperto, o focus dentro la card) aggiorna in modo CHIRURGICO invece di ricostruire, così un timer
 // di engagement simulato non cancella testo a metà / stato aperto.
@@ -379,28 +405,28 @@ function postCard(p) {
   const isMine = p.authorId === "me";
   const matched = !!(state.matches && p.authorId && state.matches.includes(p.authorId));
   const a = postAuthor(p);
-  const sub = a ? [(a.instruments || [])[0], (a.genres || [])[0]].filter(Boolean).map(esc).join(" · ") : "";
+  const sub = a ? [(a.instruments || [])[0] && vocabLabel((a.instruments || [])[0]), (a.genres || [])[0] && genreLabel((a.genres || [])[0])].filter(Boolean).map(esc).join(" · ") : "";
   const tm = postTypeMeta(p.type);
   const imgs = postImages(p).map(safeImg).filter(Boolean); // valida le sorgenti (count/dots si ricalcolano)
   const jam = p.jamId ? allJams().find(j => j.id === p.jamId) : null;
   const carousel = imgs.length ? `<div class="post-carousel" data-i="0">
-      <div class="pc-track">${imgs.map(src => `<img class="post-img" src="${esc(src)}" alt="contenuto del post" loading="lazy" decoding="async">`).join("")}</div>
-      ${imgs.length > 1 ? `<button type="button" class="pc-arrow pc-prev" aria-label="Precedente">‹</button><button type="button" class="pc-arrow pc-next" aria-label="Successiva">›</button><div class="pc-count">1/${imgs.length}</div><div class="pc-dots">${imgs.map((_, i) => `<i class="${i === 0 ? "on" : ""}"></i>`).join("")}</div>` : ""}
+      <div class="pc-track">${imgs.map(src => `<img class="post-img" src="${esc(src)}" alt="${esc(t("social.post_image_alt"))}" loading="lazy" decoding="async">`).join("")}</div>
+      ${imgs.length > 1 ? `<button type="button" class="pc-arrow pc-prev" aria-label="${esc(t("social.previous"))}">‹</button><button type="button" class="pc-arrow pc-next" aria-label="${esc(t("social.next"))}">›</button><div class="pc-count">1/${imgs.length}</div><div class="pc-dots">${imgs.map((_, i) => `<i class="${i === 0 ? "on" : ""}"></i>`).join("")}</div>` : ""}
     </div>` : "";
   const c = el(`<div class="card post" data-pid="${esc(p.id)}">
-    ${p.type ? `<div class="post-type-badge t-${esc(p.type)}">${ic(tm.icon)} ${esc(tm.label)}</div>` : ""}
+    ${p.type ? `<div class="post-type-badge t-${esc(p.type)}">${ic(tm.icon)} ${esc(t(tm.labelKey))}</div>` : ""}
     <div class="card-head author-clickable">${avatarTag(p)}<div class="meta">
-      <div class="name">${esc(p.name)}${matched ? ` <span class="in-ris">${ic('match')} In risonanza</span>` : ""}</div>
+      <div class="name">${esc(p.name)}${matched ? ` <span class="in-ris">${ic('match')} ${esc(t("social.in_resonance"))}</span>` : ""}</div>
       <div class="loc">${timeAgo(p.ts)}${sub ? " · " + sub : ""}</div></div></div>
     ${p.text ? `<div class="post-text">${linkifyPost(p.text)}</div>` : ""}
     ${jam ? jamEmbedHtml(jam) : ""}
     ${carousel}
     <div class="react-picker" hidden>${REACTIONS.map(r => `<button data-r="${r}">${r}</button>`).join("")}</div>
     <div class="post-actions">
-      <button class="post-act${p.myReaction ? " reacted" : ""}" data-react aria-label="Reagisci" aria-expanded="false">${reactionFace(s)}</button>
-      <button class="post-act" data-cmt aria-label="Commenti">${ic('chat-bubble')} <span>${(p.comments || []).length}</span></button>
-      ${canDm ? `<button class="post-act" data-dm>${ic('send')} Scrivi</button>` : ""}
-      ${isMine ? `<button class="post-act post-more" data-menu aria-label="Opzioni del post" title="Opzioni">${ic('sliders')}</button>` : (canDm ? `<button class="post-act post-more" data-report aria-label="Segnala" title="Segnala">${ic('flag')}</button>` : "")}
+      <button class="post-act${p.myReaction ? " reacted" : ""}" data-react aria-label="${esc(t("social.react"))}" aria-expanded="false">${reactionFace(s)}</button>
+      <button class="post-act" data-cmt aria-label="${esc(t("social.comments"))}">${ic('chat-bubble')} <span>${(p.comments || []).length}</span></button>
+      ${canDm ? `<button class="post-act" data-dm>${ic('send')} ${esc(t("social.write"))}</button>` : ""}
+      ${isMine ? `<button class="post-act post-more" data-menu aria-label="${esc(t("social.post_options"))}" title="${esc(t("social.options"))}">${ic('sliders')}</button>` : (canDm ? `<button class="post-act post-more" data-report aria-label="${esc(t("social.report"))}" title="${esc(t("social.report"))}">${ic('flag')}</button>` : "")}
     </div>
     <div class="post-comments" hidden></div>
   </div>`);
@@ -421,7 +447,7 @@ function postCard(p) {
   c.querySelector("[data-cmt]").onclick = () => { cmtBox.hidden = !cmtBox.hidden; if (!cmtBox.hidden) paintComments(adoptPost(p), cmtBox, c); };
   if (canDm) c.querySelector("[data-dm]").onclick = () => dmAuthor(p.authorId, p.name);
   if (isMine) { const mb = c.querySelector("[data-menu]"); if (mb) mb.onclick = () => openPostMenu(p); }
-  else if (canDm) { const rb = c.querySelector("[data-report]"); if (rb) rb.onclick = () => { if (typeof openReportSheet === "function") openReportSheet("Post di " + p.name, "post:" + (p.id || "")); }; }
+  else if (canDm) { const rb = c.querySelector("[data-report]"); if (rb) rb.onclick = () => { if (typeof openReportSheet === "function") openReportSheet(t("social.post_by", { name: p.name }), "post:" + (p.id || "")); }; }
   return c;
 }
 
@@ -431,13 +457,13 @@ function jamEventCard(p) {
   if (!j) return el(`<div data-pid="${esc(p.id)}" hidden></div>`);
   const elig = typeof jamEligible === "function" ? jamEligible(j) : true;
   const c = el(`<div class="card post type-jam-event" data-pid="${esc(p.id)}">
-    <div class="post-type-badge t-jam">${ic('microphone')} Jam in arrivo</div>
+    <div class="post-type-badge t-jam">${ic('microphone')} ${esc(t("social.jam_upcoming"))}</div>
     <div class="card-head author-clickable">${avatarTag(p)}<div class="meta">
-      <div class="name">${esc(p.name)} <span class="view-sub" style="font-weight:500">organizza</span></div>
+      <div class="name">${esc(p.name)} <span class="view-sub" style="font-weight:500">${esc(t("social.organizes"))}</span></div>
       <div class="loc">${ic('calendar')} ${formatDate(j.date)} · ${esc(j.time || "")} · ${ic('map-pin')} ${esc(j.place || "")}</div></div></div>
-    <div class="post-text"><b>${esc(j.title)}</b>${(j.genres || []).length ? " · " + (j.genres || []).map(esc).join(", ") : ""}</div>
-    ${(j.instruments || []).length ? `<div class="ad-seek"><span class="ad-seek-lbl">Cercano</span>${(j.instruments || []).map(i => `<span class="tag">${esc(i)}</span>`).join("")}</div>` : ""}
-    <div class="post-actions"><button class="btn small" type="button" data-jamopen="${esc(j.id)}">${elig ? "Partecipa" : "Dettagli"}</button></div>
+    <div class="post-text"><b>${esc(j.title)}</b>${(j.genres || []).length ? " · " + (j.genres || []).map(g => esc(genreLabel(g))).join(", ") : ""}</div>
+    ${(j.instruments || []).length ? `<div class="ad-seek"><span class="ad-seek-lbl">${esc(t("social.seeking"))}</span>${(j.instruments || []).map(i => `<span class="tag">${esc(vocabLabel(i))}</span>`).join("")}</div>` : ""}
+    <div class="post-actions"><button class="btn small" type="button" data-jamopen="${esc(j.id)}">${elig ? esc(t("social.join")) : esc(t("social.details"))}</button></div>
   </div>`);
   c.querySelector(".author-clickable").onclick = () => openAuthorProfile(p);
   c.querySelector("[data-jamopen]").onclick = () => { if (typeof openJamSheet === "function") openJamSheet(j); };
@@ -446,14 +472,14 @@ function jamEventCard(p) {
 
 // Menu di un proprio post: elimina.
 function openPostMenu(p) {
-  openModal(`<h2>Il tuo post</h2><p class="view-sub">Pubblicato ${timeAgo(p.ts)}.</p>
-    <button class="btn secondary" id="delPost" type="button" style="margin-top:10px">${ic('x')} Elimina post</button>`);
+  openModal(`<h2>${esc(t("social.your_post"))}</h2><p class="view-sub">${t("social.published_ago", { time: esc(timeAgo(p.ts)) })}</p>
+    <button class="btn secondary" id="delPost" type="button" style="margin-top:10px">${ic('x')} ${esc(t("social.delete_post"))}</button>`);
   $("#delPost").onclick = () => {
     const idx = (state.posts || []).findIndex(x => x.id === p.id);
     const removed = idx >= 0 ? state.posts[idx] : null;
     state.posts = (state.posts || []).filter(x => x.id !== p.id); save();
     closeModal(); renderFeedBody();
-    toast("Post eliminato", ic('x'), { actionLabel: "Annulla", onAction: () => { if (removed) { state.posts.splice(Math.min(idx, state.posts.length), 0, removed); save(); renderFeedBody(); } } });
+    toast(t("social.post_deleted"), ic('x'), { actionLabel: t("social.undo"), onAction: () => { if (removed) { state.posts.splice(Math.min(idx, state.posts.length), 0, removed); save(); renderFeedBody(); } } });
   };
 }
 
@@ -463,22 +489,27 @@ function startDM(p) {
   if (fresh) state.matches.push(p.id);
   if (!state.messages[p.id]) state.messages[p.id] = [];
   save();
-  if (fresh) toast("Conversazione avviata con " + (p.name || "").split(" ")[0], ic('chat-bubble'));
+  if (fresh) toast(t("social.conversation_started", { name: (p.name || "").split(" ")[0] }), ic('chat-bubble'));
   navigate("messages"); setTimeout(() => openChat(p), 50);
 }
 function dmAuthor(profileId, fallbackName) {
   const p = (state.profiles || []).find(x => x.id === profileId);
   if (p) return startDM(p);
-  toast("Profilo non disponibile per il messaggio");
+  toast(t("social.profile_unavailable_dm"));
 }
 function paintComments(p, box, card) {
   p.comments = p.comments || [];
   box.innerHTML = p.comments.map(cm => `<div class="comment"><b>${esc(cm.name)}</b> ${esc(cm.text)} <span class="notif-time">· ${timeAgo(cm.ts)}</span></div>`).join("")
-    + `<div class="add-comment"><input type="text" aria-label="Scrivi un commento" placeholder="Scrivi un commento…"><button class="btn small" type="button">Invia</button></div>`;
+    + `<div class="add-comment"><input type="text" aria-label="${esc(t("social.write_comment"))}" placeholder="${esc(t("social.write_comment_placeholder"))}"><button class="btn small" type="button">${ic('send')} ${esc(t("social.send"))}</button></div>`;
   const inp = box.querySelector("input"), btn = box.querySelector("button");
   const send = () => {
-    const t = inp.value.trim(); if (!t) return;
-    p.comments.push({ name: state.me.name || "Tu", text: t, ts: Date.now() }); save();
+    const ct = inp.value.trim(); if (!ct) return;
+    p.comments.push({ name: state.me.name || t("social.you"), text: ct, ts: Date.now() }); save();
+    if (typeof isProductionRuntime === "function" && isProductionRuntime()) {
+      JM.Api.posts.comment(p.id, ct).catch((error) =>
+        toast(error.message || "Commento non inviato", ic("alert-triangle"), { error: true })
+      );
+    }
     paintComments(p, box, card);
     const span = card.querySelector("[data-cmt] span"); if (span) span.textContent = p.comments.length;
   };
@@ -488,7 +519,7 @@ function paintComments(p, box, card) {
 // Profili da cui simulare l'engagement: prima i tuoi match reali, poi fallback ai seed.
 function engagementProfiles() {
   const m = (state.matches || []).map(id => (state.profiles || []).find(p => p.id === id)).filter(Boolean);
-  return m.length ? m : SEED_PROFILES;
+  return m.length || (typeof isProductionRuntime === "function" && isProductionRuntime()) ? m : SEED_PROFILES;
 }
 // Engagement simulato sui post dell'utente (con backend: like/commenti reali + push).
 function simulateEngagement(postId) {
@@ -498,15 +529,15 @@ function simulateEngagement(postId) {
     const r = REACTIONS[Math.floor(Math.random() * REACTIONS.length)];
     p.reactions[r] = (p.reactions[r] || 0) + 1 + Math.floor(Math.random() * 3);
     const pool = engagementProfiles(); const who = pool[Math.floor(Math.random() * pool.length)];
-    save(); notify(r, `${who.name.split(" ")[0]} ha reagito ${r} al tuo post.`, { view: "feed" });
+    save(); notify(r, t("social.notif_reacted", { name: who.name.split(" ")[0], emoji: r }), { view: "feed" });
     if (currentView === "feed") updateOnePost(postId);
   }, 2200);
   setTimeout(() => {
     const p = (state.posts || []).find(x => x.id === postId); if (!p) return;
     const pool = engagementProfiles(); const who = pool[Math.floor(Math.random() * pool.length)];
-    const lines = ["Grande! 🔥", "Anch'io ci sono 🙌", "Bellissimo, fatemi sapere!", "Che invidia 😍", "Spacca 🤘"];
+    const lines = [t("social.fake_comment_1"), t("social.fake_comment_2"), t("social.fake_comment_3"), t("social.fake_comment_4"), t("social.fake_comment_5")];
     p.comments = p.comments || []; p.comments.push({ name: who.name, text: lines[Math.floor(Math.random() * lines.length)], ts: Date.now() });
-    save(); notify("chat-bubble", `${who.name.split(" ")[0]} ha commentato il tuo post.`, { view: "feed" });
+    save(); notify("chat-bubble", t("social.notif_commented", { name: who.name.split(" ")[0] }), { view: "feed" });
     if (currentView === "feed") updateOnePost(postId);
   }, 5200);
 }
@@ -535,7 +566,8 @@ function allJams() {
   const own = state.jams || [];
   const ownIds = new Set(own.map(j => j.id));
   // La copia "adottata" in state oscura il gemello seed con lo stesso id (niente duplicati).
-  return [...own, ...SEED_JAMS.filter(j => !ownIds.has(j.id))];
+  const seeds = (typeof isProductionRuntime === "function" && isProductionRuntime()) ? [] : SEED_JAMS;
+  return [...own, ...seeds.filter(j => !ownIds.has(j.id))];
 }
 // Clona un seed jam in state.jams prima di mutarlo (stesso pattern di adoptPost): evita di mutare
 // la costante SEED_JAMS (perdita al reload + jamCount disallineato).
@@ -572,21 +604,25 @@ function jamFbDone(jId, pId) { return !!(state.jamFeedback && state.jamFeedback[
 function hasJammedWith(p) { return allJams().some(j => jamDone(j) && jamMates(j).some(m => m.id === p.id)); }
 function jamWith(p) { return allJams().find(j => jamDone(j) && jamMates(j).some(m => m.id === p.id)); }
 
+// I VALORI restano le stringhe canoniche (usate come data-chip e persistite in endo.tags,
+// lette anche altrove): qui traduciamo solo l'ETICHETTA visibile via mappa chiave→i18n.
 const JAMMATE_TAGS = ["Groove solido", "Sa ascoltare", "Sempre puntuale", "Tecnica top", "Bella energia", "Affidabile", "Versatile", "Trascina il gruppo"];
+const JAMMATE_TAG_KEYS = { "Groove solido": "social.jtag_groove", "Sa ascoltare": "social.jtag_listens", "Sempre puntuale": "social.jtag_punctual", "Tecnica top": "social.jtag_technique", "Bella energia": "social.jtag_energy", "Affidabile": "social.jtag_reliable", "Versatile": "social.jtag_versatile", "Trascina il gruppo": "social.jtag_drives" };
+function jammateTagLabel(v) { return JAMMATE_TAG_KEYS[v] ? t(JAMMATE_TAG_KEYS[v]) : v; }
 function openJamFeedback(j, p) {
   const likert = (name, label, emo) => `<div class="lk"><div class="lk-q" id="jfb-${name}">${emo} ${esc(label)}</div>
-    <div class="likert" data-name="${name}" role="radiogroup" aria-labelledby="jfb-${name}">${[1, 2, 3, 4, 5].map(v => `<button type="button" role="radio" data-v="${v}" aria-label="${v} su 5" aria-checked="${v === 4 ? "true" : "false"}" class="${v === 4 ? "on" : ""}">${v}</button>`).join("")}</div></div>`;
+    <div class="likert" data-name="${name}" role="radiogroup" aria-labelledby="jfb-${name}">${[1, 2, 3, 4, 5].map(v => `<button type="button" role="radio" data-v="${v}" aria-label="${esc(t("social.rating_aria", { v }))}" aria-checked="${v === 4 ? "true" : "false"}" class="${v === 4 ? "on" : ""}">${v}</button>`).join("")}</div></div>`;
   openModal(`
-    <h2>${ic('star')} Valuta ${esc(p.name.split(" ")[0])}</h2>
-    <div class="aff-note">Feedback <b>verificato tra JamMates</b>: sbloccato perché avete suonato insieme a "<b>${esc(j.title)}</b>". Costruisce la reputazione reale (non auto-dichiarata).</div>
-    ${likert("tec", "Tecnica / musicalità", "🎸")}
-    ${likert("punt", "Puntualità", ic('clock'))}
-    ${likert("comp", "Comportamento", "🤝")}
-    ${likert("int", "Intesa musicale", "🎶")}
-    <div class="section-label">Tag rapidi</div>
-    <div class="chips" id="jfTags">${JAMMATE_TAGS.map(t => `<span class="chip" data-chip="${esc(t)}">${esc(t)}</span>`).join("")}</div>
-    <label class="field" style="margin-top:12px;display:flex;align-items:center;gap:8px"><input type="checkbox" id="jfRejam" checked> Rigiocherei con ${esc(p.name.split(" ")[0])}</label>
-    <button class="btn" id="jfSave" style="margin-top:16px">Invia feedback</button>
+    <h2>${ic('star')} ${t("social.rate_person", { name: esc(p.name.split(" ")[0]) })}</h2>
+    <div class="aff-note">${t("social.jamfb_verified_note", { title: esc(j.title) })}</div>
+    ${likert("tec", t("social.lk_technique"), "🎸")}
+    ${likert("punt", t("social.lk_punctuality"), ic('clock'))}
+    ${likert("comp", t("social.lk_behavior"), "🤝")}
+    ${likert("int", t("social.lk_musical_intesa"), "🎶")}
+    <div class="section-label">${esc(t("social.quick_tags"))}</div>
+    <div class="chips" id="jfTags">${JAMMATE_TAGS.map(tg => `<span class="chip" data-chip="${esc(tg)}">${esc(jammateTagLabel(tg))}</span>`).join("")}</div>
+    <label class="field" style="margin-top:12px;display:flex;align-items:center;gap:8px"><input type="checkbox" id="jfRejam" checked> ${t("social.would_replay_with", { name: esc(p.name.split(" ")[0]) })}</label>
+    <button class="btn" id="jfSave" style="margin-top:16px">${esc(t("social.send_feedback"))}</button>
   `);
   const root = $("#modalRoot");
   root.querySelectorAll(".likert").forEach(rw => rw.querySelectorAll("button").forEach(b => b.onclick = () => { rw.querySelectorAll("button").forEach(x => { x.classList.remove("on"); x.setAttribute("aria-checked", "false"); }); b.classList.add("on"); b.setAttribute("aria-checked", "true"); }));
@@ -602,23 +638,23 @@ function openJamFeedback(j, p) {
     p.endo.endorsements = n + 1;
     p.endo.rejamTotal = (p.endo.rejamTotal || 0) + 1;
     if ($("#jfRejam").checked) p.endo.rejamYes = (p.endo.rejamYes || 0) + 1;
-    p.endo.tags = p.endo.tags || {}; selTags.forEach(t => p.endo.tags[t] = (p.endo.tags[t] || 0) + 1);
+    p.endo.tags = p.endo.tags || {}; selTags.forEach(tg => p.endo.tags[tg] = (p.endo.tags[tg] || 0) + 1);
     state.jamFeedback = state.jamFeedback || {}; state.jamFeedback[jamFbKey(j.id, p.id)] = true;
-    save(); closeModal(); toast(`Feedback inviato a ${p.name.split(" ")[0]}`, ic('celebration', 'accent')); openJamSheet(j); rerenderBoardMap();
+    save(); closeModal(); toast(t("social.feedback_sent_to", { name: p.name.split(" ")[0] }), ic('celebration', 'accent')); openJamSheet(j); rerenderBoardMap();
   };
 }
 function jamFeedbackHtml(j) {
   if (!iJoinedJam(j)) return "";
   if (!jamDone(j)) {
-    return `<div class="section-label">Dopo la jam</div>
-      <div class="aff-note">Quando avete suonato, segna la jam come completata: potrai <b>valutare i tuoi JamMates</b> (solo chi ha davvero jammato con te).</div>
-      <button class="btn secondary" id="jamComplete" style="margin-top:10px">${ic('check', 'ok')} Segna come completata</button>`;
+    return `<div class="section-label">${esc(t("social.after_jam"))}</div>
+      <div class="aff-note">${t("social.after_jam_note")}</div>
+      <button class="btn secondary" id="jamComplete" style="margin-top:10px">${ic('check', 'ok')} ${esc(t("social.mark_completed"))}</button>`;
   }
   const mates = jamMates(j);
-  if (!mates.length) return `<div class="section-label">JamMates</div><div class="aff-note">Nessun JamMate collegato a un profilo da valutare.</div>`;
-  return `<div class="section-label">Valuta i tuoi JamMates</div>
-    <p class="view-sub">Avete suonato insieme: lascia un feedback verificato.</p>
-    ${mates.map(m => `<div class="rep-item"><span class="song">${esc(m.avatar || "🎵")} ${esc(m.name)}</span>${jamFbDone(j.id, m.id) ? `<span class="tag lvl">${ic('check')} Valutato</span>` : `<button class="btn small" data-rate="${esc(m.id)}">${ic('star')} Valuta</button>`}</div>`).join("")}`;
+  if (!mates.length) return `<div class="section-label">JamMates</div><div class="aff-note">${esc(t("social.no_jammates_to_rate"))}</div>`;
+  return `<div class="section-label">${esc(t("social.rate_your_jammates"))}</div>
+    <p class="view-sub">${esc(t("social.played_together_sub"))}</p>
+    ${mates.map(m => `<div class="rep-item"><span class="song">${esc(m.avatar || "🎵")} ${esc(m.name)}</span>${jamFbDone(j.id, m.id) ? `<span class="tag lvl">${ic('check')} ${esc(t("social.rated"))}</span>` : `<button class="btn small" data-rate="${esc(m.id)}">${ic('star')} ${esc(t("social.rate"))}</button>`}</div>`).join("")}`;
 }
 
 // Coordinate (lat,lng) delle città per centrare la mappa reale. La città scelta
@@ -637,17 +673,17 @@ function renderJamMap(box) {
   const jams = allJams();
   const elig = jams.filter(jamEligible).length;
   box.appendChild(el(`<div>
-    <p class="view-sub">Jam vicino a te su mappa. In <span style="color:var(--ok);font-weight:800">verde</span> quelle adatte a te. Tocca un segnaposto, o tira su la <b>linguetta</b> per la lista.</p>
+    <p class="view-sub">${t("social.map_sub")}</p>
     <div class="map-search">
-      <input type="text" id="mapSearch" placeholder="Cerca città o indirizzo…" autocomplete="off">
-      <button class="btn small" id="mapSearchBtn">${ic('search')} Vai</button>
+      <input type="text" id="mapSearch" placeholder="${esc(t("social.map_search_placeholder"))}" autocomplete="off">
+      <button class="btn small" id="mapSearchBtn">${ic('search')} ${esc(t("social.go"))}</button>
     </div>
     <div class="jam-map-wrap">
       <div class="jam-map" id="jamMap"></div>
-      <button class="map-locate" id="mapLocate" title="La mia posizione" aria-label="Centra sulla mia posizione">${ic('map-pin')}</button>
+      <button class="map-locate" id="mapLocate" title="${esc(t("social.my_location"))}" aria-label="${esc(t("social.center_my_location"))}">${ic('map-pin')}</button>
       <div class="jam-sheet" id="jamSheet">
         <div class="jam-sheet-grip" id="jamGrip"><span class="grip-bar"></span></div>
-        <div class="jam-sheet-head">🎶 ${jams.length} jam${elig ? ` · <span style="color:var(--ok)">${elig} per te</span>` : ""}</div>
+        <div class="jam-sheet-head">🎶 ${jams.length} jam${elig ? ` · <span style="color:var(--ok)">${t("social.n_for_you", { n: elig })}</span>` : ""}</div>
         <div class="jam-sheet-list" id="jamList"></div>
       </div>
     </div>
@@ -662,7 +698,7 @@ function renderJamMap(box) {
   grip.addEventListener("pointerup", () => { startY = null; setTimeout(() => { dragged = false; }, 60); });
   grip.onclick = () => { if (!dragged) sheet.classList.toggle("open"); };
   // Mappa reale (Leaflet) a tema scuro, centrata sulla città scelta.
-  if (typeof L === "undefined") { $("#jamMap").innerHTML = `<div class="empty" style="padding:24px">Mappa non disponibile.</div>`; return; }
+  if (typeof L === "undefined") { $("#jamMap").innerHTML = `<div class="empty" style="padding:24px">${esc(t("social.map_unavailable"))}</div>`; return; }
   if (jamMapInstance) { try { jamMapInstance.remove(); } catch (e) {} jamMapInstance = null; }
   const center = cityCenter(state.me.city);
   const map = L.map($("#jamMap"), { zoomControl: true, attributionControl: true }).setView(center, 12);
@@ -675,11 +711,11 @@ function renderJamMap(box) {
   });
   setTimeout(() => { try { map.invalidateSize(); } catch (e) {} }, 60);
   $("#mapLocate").onclick = () => {
-    if (!navigator.geolocation) return toast("Geolocalizzazione non disponibile");
-    toast("Cerco la tua posizione…");
+    if (!navigator.geolocation) return toast(t("social.geoloc_unavailable"));
+    toast(t("social.locating"));
     navigator.geolocation.getCurrentPosition(
-      pos => { const ll = [pos.coords.latitude, pos.coords.longitude]; map.setView(ll, 13); if (locateMarker) { locateMarker.setLatLng(ll); } else { locateMarker = L.circleMarker(ll, { radius: 8, color: "#8b6cff", fillColor: "#8b6cff", fillOpacity: .9, weight: 2 }).addTo(map).bindTooltip("Sei qui"); } },
-      () => toast("Posizione non disponibile — cerca la città qui sopra"),
+      pos => { const ll = [pos.coords.latitude, pos.coords.longitude]; map.setView(ll, 13); if (locateMarker) { locateMarker.setLatLng(ll); } else { locateMarker = L.circleMarker(ll, { radius: 8, color: "#8b6cff", fillColor: "#8b6cff", fillOpacity: .9, weight: 2 }).addTo(map).bindTooltip(t("social.you_are_here")); } },
+      () => toast(t("social.location_unavailable")),
       { enableHighAccuracy: true, timeout: 8000 }
     );
   };
@@ -694,13 +730,13 @@ function renderJamMap(box) {
     fetch("https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=" + encodeURIComponent(q), { headers: { "Accept": "application/json" }, signal: ctrl.signal })
       .then(r => r.json())
       .then(d => {
-        if (!d || !d.length) return toast("Nessun risultato per «" + q + "»");
+        if (!d || !d.length) return toast(t("social.no_search_results", { q }));
         const ll = [parseFloat(d[0].lat), parseFloat(d[0].lon)];
         map.setView(ll, 14);
         if (searchMarker) { searchMarker.setLatLng(ll); searchMarker.setTooltipContent(esc(d[0].display_name)); searchMarker.openTooltip(); }
         else searchMarker = L.circleMarker(ll, { radius: 8, color: "#ff5c9d", fillColor: "#ff5c9d", fillOpacity: .9, weight: 2 }).addTo(map).bindTooltip(esc(d[0].display_name)).openTooltip();
       })
-      .catch(() => toast(ctrl.signal.aborted ? "Ricerca troppo lenta — riprova" : "Ricerca non disponibile", ic('alert-triangle'), { error: true }))
+      .catch(() => toast(ctrl.signal.aborted ? t("social.search_too_slow") : t("social.search_unavailable"), ic('alert-triangle'), { error: true }))
       .finally(() => { clearTimeout(to); done(); });
   };
   $("#mapSearchBtn").onclick = doSearch;
@@ -710,21 +746,21 @@ function jamCard(j) {
   const elig = jamEligible(j), my = myJamStatus(j);
   const c = el(`<div class="card">
     <div class="card-head">${avatarTag({ avatar: j.avatar, color: j.color })}<div class="meta">
-      <div class="name">${esc(j.title)} ${elig ? '<span class="tag lvl">adatta a te</span>' : ""}</div>
+      <div class="name">${esc(j.title)} ${elig ? `<span class="tag lvl">${esc(t("social.fits_you"))}</span>` : ""}</div>
       <div class="loc">${ic('calendar')} ${formatDate(j.date)} · ${esc(j.time)} · ${ic('map-pin')} ${esc(j.place)}</div></div>
-      ${j.accessMode === "approval" ? '<span class="tag">🔒 su richiesta</span>' : '<span class="tag accent">aperta</span>'}</div>
-    <div class="tags" style="margin-top:8px">${(j.instruments || []).map(i => `<span class="tag">${esc(i)}</span>`).join("")}</div>
-    ${my ? `<div class="aff-note" style="margin-top:8px">${my === "joined" ? `${ic('check')} Partecipi a questa jam` : `${ic('clock')} Richiesta inviata`}</div>` : ""}
+      ${j.accessMode === "approval" ? `<span class="tag">🔒 ${esc(t("social.on_request"))}</span>` : `<span class="tag accent">${esc(t("social.open_jam"))}</span>`}</div>
+    <div class="tags" style="margin-top:8px">${(j.instruments || []).map(i => `<span class="tag">${esc(vocabLabel(i))}</span>`).join("")}</div>
+    ${my ? `<div class="aff-note" style="margin-top:8px">${my === "joined" ? `${ic('check')} ${esc(t("social.you_join_this_jam"))}` : `${ic('clock')} ${esc(t("social.request_sent"))}`}</div>` : ""}
   </div>`);
   c.onclick = () => openJamSheet(j);
   return c;
 }
 function jamActionHtml(j, elig, my) {
-  if (j.hostId === "me") return `<div class="aff-note" style="margin-top:14px">Sei l'host di questa jam.</div>`;
-  if (my === "joined") return `<button class="btn secondary" id="jamCancel" style="margin-top:14px">Annulla partecipazione</button>`;
-  if (my === "requested") return `<button class="btn secondary" id="jamCancel" style="margin-top:14px">Annulla richiesta</button>`;
-  if (!elig) return `<div class="aff-note" style="margin-top:14px">${ic('alert-triangle')} Non risulti idoneo: servono <b>${(j.instruments || []).join(", ")}</b> a livello <b>${esc(LEVELS[j.minLevel || 0])}+</b>. Aggiorna i tuoi strumenti nel profilo.</div>`;
-  return `<button class="btn" id="jamAct" style="margin-top:14px">${j.accessMode === "approval" ? `${ic('send')} Richiedi di partecipare` : "🎶 Partecipa"}</button>`;
+  if (j.hostId === "me") return `<div class="aff-note" style="margin-top:14px">${esc(t("social.you_are_host"))}</div>`;
+  if (my === "joined") return `<button class="btn secondary" id="jamCancel" style="margin-top:14px">${esc(t("social.cancel_participation"))}</button>`;
+  if (my === "requested") return `<button class="btn secondary" id="jamCancel" style="margin-top:14px">${esc(t("social.cancel_request"))}</button>`;
+  if (!elig) return `<div class="aff-note" style="margin-top:14px">${ic('alert-triangle')} ${t("social.not_eligible", { instruments: esc((j.instruments || []).map(vocabLabel).join(", ")), level: esc(levelLabel(LEVELS[j.minLevel || 0])) })}</div>`;
+  return `<button class="btn" id="jamAct" style="margin-top:14px">${j.accessMode === "approval" ? `${ic('send')} ${esc(t("social.request_to_join"))}` : `🎶 ${esc(t("social.join"))}`}</button>`;
 }
 function openJamSheet(j) {
   const elig = jamEligible(j), my = myJamStatus(j), isHost = j.hostId === "me";
@@ -733,17 +769,17 @@ function openJamSheet(j) {
     <div style="text-align:center"><div style="display:flex;justify-content:center">${avatarTag({ avatar: j.avatar, color: j.color }, true)}</div>
       <h2>${esc(j.title)}</h2>
       <div class="loc">${ic('calendar')} ${formatDate(j.date)} · ${esc(j.time)} · ${ic('map-pin')} ${esc(j.place)}</div>
-      <div class="loc" style="margin-top:4px">Host: ${esc(j.host)}</div>
+      <div class="loc" style="margin-top:4px">${t("social.host_label", { name: esc(j.host) })}</div>
     </div>
-    <div class="tags" style="justify-content:center;margin-top:10px">${(j.genres || []).map(g => `<span class="tag accent">${esc(g)}</span>`).join("")}</div>
-    <div class="section-label">Strumenti cercati · livello min. ${esc(LEVELS[j.minLevel || 0])}</div>
-    <div class="tags">${(j.instruments || []).map(i => `<span class="tag">${esc(i)}</span>`).join("")}</div>
-    <div class="section-label">Partecipanti (${(j.participants || []).length})</div>
+    <div class="tags" style="justify-content:center;margin-top:10px">${(j.genres || []).map(g => `<span class="tag accent">${esc(genreLabel(g))}</span>`).join("")}</div>
+    <div class="section-label">${t("social.instruments_sought", { level: esc(levelLabel(LEVELS[j.minLevel || 0])) })}</div>
+    <div class="tags">${(j.instruments || []).map(i => `<span class="tag">${esc(vocabLabel(i))}</span>`).join("")}</div>
+    <div class="section-label">${t("social.participants", { n: (j.participants || []).length })}</div>
     <div class="tags">${(j.participants || []).map(p => `<span class="tag${p.status === "joined" ? " lvl" : ""}">${esc(p.name)}${p.status === "requested" ? ` ${ic('clock')}` : ""}</span>`).join("")}</div>
-    <div class="aff-note" style="margin-top:12px">${j.accessMode === "approval" ? "🔒 Jam <b>su approvazione</b>: l'host conferma le richieste." : "✅ Jam <b>aperta</b>: gli idonei entrano subito."}</div>
-    ${isHost && reqs.length ? `<div class="section-label">Richieste</div><div id="jamReqs">${reqs.map((p, i) => `<div class="lvl-row"><span class="lvl-inst">${esc(p.name)}</span><span><button class="btn small" data-ok="${i}">${ic('check')} Accetta</button> <button class="btn small secondary" data-no="${i}">${ic('x')}</button></span></div>`).join("")}</div>` : ""}
+    <div class="aff-note" style="margin-top:12px">${j.accessMode === "approval" ? t("social.jam_approval_note") : t("social.jam_open_note")}</div>
+    ${isHost && reqs.length ? `<div class="section-label">${esc(t("social.requests"))}</div><div id="jamReqs">${reqs.map((p, i) => `<div class="lvl-row"><span class="lvl-inst">${esc(p.name)}</span><span><button class="btn small" data-ok="${i}">${ic('check')} ${esc(t("social.accept"))}</button> <button class="btn small secondary" data-no="${i}">${ic('x')}</button></span></div>`).join("")}</div>` : ""}
     ${jamActionHtml(j, elig, my)}
-    ${!isHost && j.hostId ? `<button class="btn secondary" id="jamDm" style="margin-top:10px">${ic('send')} Scrivi a ${esc(j.host.split(" ")[0])}</button>` : ""}
+    ${!isHost && j.hostId ? `<button class="btn secondary" id="jamDm" style="margin-top:10px">${ic('send')} ${t("social.write_to", { name: esc(j.host.split(" ")[0]) })}</button>` : ""}
     ${jamFeedbackHtml(j)}
   `);
   if ($("#jamDm")) $("#jamDm").onclick = () => { closeModal(); dmAuthor(j.hostId, j.host); };
@@ -751,70 +787,89 @@ function openJamSheet(j) {
   if ($("#jamComplete")) $("#jamComplete").onclick = () => {
     state.jamsDone = state.jamsDone || {}; state.jamsDone[j.id] = true;
     state.me.jamCount = (state.me.jamCount || 0) + 1;
-    save(); toast("Jam completata — valuta i tuoi JamMates", ic('celebration','accent'));
-    if (typeof notify === "function") notify("celebration", `Jam "${j.title}" completata: valuta i tuoi JamMates!`, { view: "board" });
+    save(); toast(t("social.jam_completed_toast"), ic('celebration','accent'));
+    if (typeof notify === "function") notify("celebration", t("social.jam_completed_notif", { title: j.title }), { view: "board" });
     openJamSheet(j); rerenderBoardMap();
   };
   document.querySelectorAll("#modalRoot [data-rate]").forEach(b => b.onclick = () => { const p = (state.profiles || []).find(x => x.id === b.dataset.rate); if (p) openJamFeedback(j, p); });
-  if ($("#jamCancel")) $("#jamCancel").onclick = () => { const t = adoptJam(j); t.participants = (t.participants || []).filter(x => !x.me); save(); closeModal(); toast("Annullato"); rerenderBoardMap(); };
+  if ($("#jamCancel")) $("#jamCancel").onclick = () => { const jj = adoptJam(j); jj.participants = (jj.participants || []).filter(x => !x.me); save(); closeModal(); toast(t("social.cancelled")); rerenderBoardMap(); };
   if (isHost && reqs.length) {
-    document.querySelectorAll("#jamReqs [data-ok]").forEach(b => b.onclick = () => { reqs[+b.dataset.ok].status = "joined"; save(); toast("Richiesta accettata", ic('check','ok')); openJamSheet(j); rerenderBoardMap(); });
-    document.querySelectorAll("#jamReqs [data-no]").forEach(b => b.onclick = () => { const p = reqs[+b.dataset.no]; j.participants = j.participants.filter(x => x !== p); save(); toast("Richiesta rifiutata"); openJamSheet(j); rerenderBoardMap(); });
+    document.querySelectorAll("#jamReqs [data-ok]").forEach(b => b.onclick = () => { reqs[+b.dataset.ok].status = "joined"; save(); toast(t("social.request_accepted"), ic('check','ok')); openJamSheet(j); rerenderBoardMap(); });
+    document.querySelectorAll("#jamReqs [data-no]").forEach(b => b.onclick = () => { const p = reqs[+b.dataset.no]; j.participants = j.participants.filter(x => x !== p); save(); toast(t("social.request_rejected")); openJamSheet(j); rerenderBoardMap(); });
   }
 }
 function jamJoin(j) {
   j = adoptJam(j); // muta la copia in state, non il seed
   const status = j.accessMode === "approval" ? "requested" : "joined";
   j.participants = j.participants || [];
-  j.participants.push({ name: state.me.name || "Tu", status, me: true });
+  j.participants.push({ name: state.me.name || t("social.you"), status, me: true });
+  if (typeof isProductionRuntime === "function" && isProductionRuntime()) {
+    JM.Api.jams.join(j.id).catch((error) =>
+      toast(error.message || "Partecipazione non riuscita", ic("alert-triangle"), { error: true })
+    );
+  }
   save(); closeModal();
-  if (status === "joined") { toast("Partecipi alla jam! 🎶"); notify("music-note", `Partecipi a "${j.title}" il ${formatDate(j.date)}.`, { view: "board" }); }
+  if (status === "joined") { toast(t("social.you_joined_jam")); notify("music-note", t("social.notif_joined", { title: j.title, date: formatDate(j.date) }), { view: "board" }); }
   else {
-    toast("Richiesta inviata", ic('send')); notify("clock", `Richiesta inviata per "${j.title}".`, { view: "board" });
-    setTimeout(() => {
+    toast(t("social.request_sent"), ic('send')); notify("clock", t("social.notif_request_sent", { title: j.title }), { view: "board" });
+    if (!(typeof isProductionRuntime === "function" && isProductionRuntime())) setTimeout(() => {
       const me = (j.participants || []).find(x => x.me);
-      if (me && me.status === "requested") { me.status = "joined"; save(); notify("check", `${j.host.split(" ")[0]} ha accettato la tua richiesta per "${j.title}"!`, { view: "board" }); rerenderBoardMap(); }
+      if (me && me.status === "requested") { me.status = "joined"; save(); notify("check", t("social.notif_request_accepted", { name: j.host.split(" ")[0], title: j.title }), { view: "board" }); rerenderBoardMap(); }
     }, 3200);
   }
   rerenderBoardMap();
 }
 function openCreateJam() {
   openModal(`
-    <h2>Crea una jam 🎶</h2>
-    <label class="field">Titolo</label><input type="text" id="jTitle" placeholder="Es. Jam blues al parco">
-    <label class="field" style="margin-top:10px">Luogo</label><input type="text" id="jPlace" value="${esc(state.me.city)}" placeholder="Es. Parco Sempione">
+    <h2>${t("social.create_jam_title")}</h2>
+    <label class="field">${esc(t("social.title"))}</label><input type="text" id="jTitle" placeholder="${esc(t("social.title_placeholder"))}">
+    <label class="field" style="margin-top:10px">${esc(t("social.place"))}</label><input type="text" id="jPlace" value="${esc(state.me.city)}" placeholder="${esc(t("social.place_placeholder"))}">
     <div class="filter-row" style="margin-top:10px">
-      <div style="flex:1"><label class="field">Data</label><input type="date" id="jDate"></div>
-      <div style="flex:1"><label class="field">Ora</label><input type="time" id="jTime" value="19:00"></div>
+      <div style="flex:1"><label class="field">${esc(t("social.date"))}</label><input type="date" id="jDate"></div>
+      <div style="flex:1"><label class="field">${esc(t("social.time"))}</label><input type="time" id="jTime" value="19:00"></div>
     </div>
-    <label class="field" style="margin-top:10px">Generi</label><div class="chips" id="jGen">${chips(GENRES, [])}</div>
-    <label class="field" style="margin-top:10px">Strumenti cercati</label><div id="jIns"></div>
-    <label class="field" style="margin-top:10px">Livello minimo</label><select id="jLvl">${options(LEVELS, LEVELS[0])}</select>
-    <label class="field" style="margin-top:10px">Accesso</label>
-    <select id="jAccess"><option value="open">Aperta — gli idonei entrano subito</option><option value="approval">Su approvazione — confermi tu</option></select>
-    <button class="btn" id="jSave" style="margin-top:16px">Pubblica jam</button>
+    <label class="field" style="margin-top:10px">${esc(t("social.genres"))}</label><div class="chips" id="jGen">${chips(GENRES, [], genreLabel)}</div>
+    <label class="field" style="margin-top:10px">${esc(t("social.instruments_sought_label"))}</label><div id="jIns"></div>
+    <label class="field" style="margin-top:10px">${esc(t("social.min_level"))}</label><select id="jLvl">${options(LEVELS, LEVELS[0], null, levelLabel)}</select>
+    <label class="field" style="margin-top:10px">${esc(t("social.access"))}</label>
+    <select id="jAccess"><option value="open">${esc(t("social.access_open"))}</option><option value="approval">${esc(t("social.access_approval"))}</option></select>
+    <button class="btn" id="jSave" style="margin-top:16px">${esc(t("social.publish_jam"))}</button>
   `);
   const selG = [], selI = [];
   document.querySelectorAll("#jGen .chip").forEach(c => c.onclick = () => toggleChip(c, selG));
-  instrumentPicker($("#jIns"), selI, { placeholder: "Strumento cercato…" });
-  $("#jSave").onclick = () => {
-    const title = $("#jTitle").value.trim(); if (!title) return markFieldError("#jTitle", "Dai un titolo alla jam.");
-    if (!selI.length) return toast("Indica almeno uno strumento cercato");
+  instrumentPicker($("#jIns"), selI, { placeholder: t("social.instrument_sought_placeholder") });
+  $("#jSave").onclick = async () => {
+    const title = $("#jTitle").value.trim(); if (!title) return markFieldError("#jTitle", t("social.give_jam_title"));
+    if (!selI.length) return toast(t("social.indicate_instrument_sought"));
     const j = {
-      id: "mj" + Date.now(), hostId: "me", host: state.me.name || "Tu", avatar: state.me.avatar, color: state.me.color,
+      id: "mj" + Date.now(), hostId: "me", host: state.me.name || t("social.you"), avatar: state.me.avatar, color: state.me.color,
       title, place: $("#jPlace").value.trim() || state.me.city, date: $("#jDate").value || new Date(Date.now() + 5 * 864e5).toISOString().slice(0, 10),
       time: $("#jTime").value || "19:00", genres: selG, instruments: selI, minLevel: LEVELS.indexOf($("#jLvl").value),
       accessMode: $("#jAccess").value, x: 30 + Math.floor(Math.random() * 40), y: 28 + Math.floor(Math.random() * 44),
       lat: cityCenter(state.me.city)[0] + (Math.random() - 0.5) * 0.05, lng: cityCenter(state.me.city)[1] + (Math.random() - 0.5) * 0.07,
-      participants: [{ name: state.me.name || "Tu", status: "joined", me: true }]
+      participants: [{ name: state.me.name || t("social.you"), status: "joined", me: true }]
     };
-    state.jams = state.jams || []; state.jams.unshift(j); save(); closeModal(); toast("Jam pubblicata 🎶");
+    if (typeof isProductionRuntime === "function" && isProductionRuntime()) {
+      try {
+        const created = await JM.Api.jams.create({
+          title: j.title,
+          startsAt: `${j.date}T${j.time}:00`,
+          place: j.place, genres: j.genres, instruments: j.instruments,
+          minLevel: j.minLevel, accessMode: j.accessMode, lat: j.lat, lng: j.lng
+        });
+        j.id = created.id;
+        j.hostId = state.me.id;
+      } catch (error) {
+        return toast(error.message || "Jam non pubblicata", ic("alert-triangle"), { error: true });
+      }
+    }
+    state.jams = state.jams || []; state.jams.unshift(j); save(); closeModal(); toast(t("social.jam_published"));
     state.ui.boardMode = "map"; if (currentView === "board") renderBoard2(); else navigate("board");
-    setTimeout(() => {
+    if (!(typeof isProductionRuntime === "function" && isProductionRuntime())) setTimeout(() => {
       const jj = (state.jams || []).find(x => x.id === j.id); if (!jj) return;
       const who = SEED_PROFILES[Math.floor(Math.random() * SEED_PROFILES.length)];
       jj.participants.push({ name: who.name, status: j.accessMode === "approval" ? "requested" : "joined" }); save();
-      notify(j.accessMode === "approval" ? "🙋" : "🎶", `${who.name.split(" ")[0]} ${j.accessMode === "approval" ? "ha chiesto di partecipare a" : "si è unito a"} "${j.title}".`, { view: "board" });
+      notify(j.accessMode === "approval" ? "🙋" : "🎶", j.accessMode === "approval" ? t("social.notif_someone_requested", { name: who.name.split(" ")[0], title: j.title }) : t("social.notif_someone_joined", { name: who.name.split(" ")[0], title: j.title }), { view: "board" });
       rerenderBoardMap();
     }, 3500);
   };
@@ -846,12 +901,13 @@ function allTeachers() {
   // ricreati a ogni render): le fondiamo qui, unica fonte letta da teacherCard/openTeacherProfile.
   const stats = state.teacherStats || {};
   const apply = (t) => { const s = stats[t.id]; return s ? Object.assign({}, t, { rating: s.rating, ratings: s.ratings, reviewTags: s.reviewTags || t.reviewTags || {} }) : t; };
-  const mine = state.teacher ? [Object.assign({ id: "me", name: state.me.name || "Tu", avatar: state.me.avatar, color: state.me.color, photo: state.me.photo || "", mine: true, rating: 0, ratings: 0 }, state.teacher)] : [];
+  const mine = state.teacher ? [Object.assign({ id: "me", name: state.me.name || t("social.you"), avatar: state.me.avatar, color: state.me.color, photo: state.me.photo || "", mine: true, rating: 0, ratings: 0 }, state.teacher)] : [];
   // Fonde seed insegnanti + profili-insegnante, collassando i doppioni per nome (es. t2/u1, t4/u7):
   // se un SEED_PROFILE insegna ed esiste un seed-teacher con lo stesso nome, vince il profilo collegato.
   const peers = profileTeachers().map(apply);
   const peerNames = new Set(peers.map(p => (p.name || "").toLowerCase()));
-  const seed = SEED_TEACHERS.filter(t => !peerNames.has((t.name || "").toLowerCase())).map(apply);
+  const source = (typeof isProductionRuntime === "function" && isProductionRuntime()) ? (state.teachers || []) : SEED_TEACHERS;
+  const seed = source.filter(t => !peerNames.has((t.name || "").toLowerCase())).map(apply);
   return [...mine, ...peers, ...seed];
 }
 // Profilo (state.profiles) collegato a un insegnante: per peerId esplicito o, in fallback, per nome.
@@ -904,11 +960,11 @@ function lessonRelevance(t) {
 function lessonRelevanceLabel(t) {
   if (t.mine) return null;
   const peer = teacherPeer(t);
-  if (peer && typeof hasJammedWith === "function" && hasJammedWith(peer)) return "Avete già jammato";
+  if (peer && typeof hasJammedWith === "function" && hasJammedWith(peer)) return window.t("social.already_jammed");
   const myIns = state.me.instruments || [];
-  if ((t.instruments || []).some(i => myIns.includes(i))) return "Insegna ciò che suoni";
-  if (genreOverlap(teacherGenres(t), state.me.genres) > 0) return "Nella tua scena";
-  if (t.city && state.me.city && t.city === state.me.city) return "In sintonia";
+  if ((t.instruments || []).some(i => myIns.includes(i))) return window.t("social.teaches_what_you_play");
+  if (genreOverlap(teacherGenres(t), state.me.genres) > 0) return window.t("social.in_your_scene");
+  if (t.city && state.me.city && t.city === state.me.city) return window.t("social.in_tune");
   return null;
 }
 
@@ -921,8 +977,8 @@ function brandedMeetingUrl(b) {
   const base = b.meetingUrl || "";
   if (!/^https:\/\/meet\.jit\.si\//i.test(base)) return base;
   const enc = (v) => encodeURIComponent(JSON.stringify(v));
-  const name = (state.me.name || "Allievo");
-  const subject = "Lezione JamMate con " + (b.teacherName || "").split(" ")[0];
+  const name = (state.me.name || t("social.student"));
+  const subject = t("social.lesson_subject", { name: (b.teacherName || "").split(" ")[0] });
   return base + "#userInfo.displayName=" + enc(name) + "&config.subject=" + enc(subject);
 }
 // Schermata pre-lezione brandizzata JamMate (il "wrapper" è nostro, la call è Jitsi).
@@ -931,23 +987,23 @@ function openVideoLesson(b) {
   openModal(`
     <div style="text-align:center">
       <div class="vl-brand"><span class="vl-logo">${ic('music-note')}</span><span class="vl-name">JamMate</span></div>
-      <div class="vl-badge">Videolezione</div>
-      <h2 style="margin-top:8px">Lezione con ${esc(b.teacherName.split(" ")[0])}</h2>
-      <div class="loc">${ic('calendar')} ${formatDate(b.date)} · ${esc(b.time)} · <span class="badge-online">${ic('video')} online</span></div>
+      <div class="vl-badge">${esc(t("social.video_lesson"))}</div>
+      <h2 style="margin-top:8px">${t("social.lesson_with", { name: esc(b.teacherName.split(" ")[0]) })}</h2>
+      <div class="loc">${ic('calendar')} ${formatDate(b.date)} · ${esc(b.time)} · <span class="badge-online">${ic('video')} ${esc(t("social.online"))}</span></div>
     </div>
-    <div class="aff-note" style="margin-top:14px">Quando sei pronto entra nella stanza: si apre in una nuova scheda e il tuo nome è già impostato.</div>
-    <button class="btn" id="vlEnter" style="margin-top:14px">${ic('video')} Entra nella videolezione →</button>
+    <div class="aff-note" style="margin-top:14px">${esc(t("social.video_ready_note"))}</div>
+    <button class="btn" id="vlEnter" style="margin-top:14px">${ic('video')} ${esc(t("social.enter_video_lesson"))}</button>
     <div class="filter-row" style="margin-top:10px">
-      <button class="btn small secondary" id="vlIcs">${ic('calendar')} Aggiungi al calendario</button>
-      <button class="btn small secondary" id="vlCopy">${ic('send')} Copia link</button>
+      <button class="btn small secondary" id="vlIcs">${ic('calendar')} ${esc(t("social.add_to_calendar"))}</button>
+      <button class="btn small secondary" id="vlCopy">${ic('send')} ${esc(t("social.copy_link"))}</button>
     </div>
   `);
   $("#vlEnter").onclick = () => { window.open(safeUrl(url), "_blank", "noopener,noreferrer"); };
   $("#vlIcs").onclick = () => downloadICS(b);
   $("#vlCopy").onclick = () => {
     const raw = b.meetingUrl || "";
-    if (!raw) return toast("Nessun link");
-    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(raw).then(() => toast("Link copiato", ic('check', 'ok')), () => toast(raw, ic('send')));
+    if (!raw) return toast(t("social.no_link"));
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(raw).then(() => toast(t("social.link_copied"), ic('check', 'ok')), () => toast(raw, ic('send')));
     else toast(raw, ic('send')); // fallback brandizzato: niente dialog nativi
   };
 }
@@ -964,9 +1020,9 @@ function downloadICS(b) {
     "BEGIN:STANDARD", "TZOFFSETFROM:+0200", "TZOFFSETTO:+0100", "TZNAME:CET", "DTSTART:19701025T030000", "RRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU", "END:STANDARD",
     "END:VTIMEZONE",
     "BEGIN:VEVENT", "UID:" + b.id + "@jammate", "DTSTAMP:" + stamp, "DTSTART;TZID=Europe/Rome:" + dt, "DURATION:PT1H",
-    "SUMMARY:" + e2("Lezione con " + b.teacherName),
+    "SUMMARY:" + e2(t("social.ics_summary", { name: b.teacherName })),
     b.meetingUrl ? "LOCATION:" + e2(b.meetingUrl) : "",
-    b.meetingUrl ? "DESCRIPTION:" + e2("Videolezione JamMate: " + b.meetingUrl) : "",
+    b.meetingUrl ? "DESCRIPTION:" + e2(t("social.ics_description", { url: b.meetingUrl })) : "",
     "END:VEVENT", "END:VCALENDAR"
   ].filter(Boolean);
   try {
@@ -975,14 +1031,20 @@ function downloadICS(b) {
     const a = document.createElement("a"); a.href = url; a.download = "lezione-jammate.ics";
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1500);
-    toast("Evento calendario scaricato", ic('calendar'));
-  } catch (e) { toast("Calendario non disponibile"); }
+    toast(t("social.calendar_downloaded"), ic('calendar'));
+  } catch (e) { toast(t("social.calendar_unavailable")); }
 }
 
 // --- Filtri Lezioni: strumento, modalità, giorni, fascia oraria, prezzo ---
 const lessonFilter = { instrument: "", mode: "", days: [], bands: [], maxPrice: 0 };
-const LESSON_DOW = [["Lun", 1], ["Mar", 2], ["Mer", 3], ["Gio", 4], ["Ven", 5], ["Sab", 6], ["Dom", 0]];
+// Le etichette giorno sono solo display (il valore usato è il numero); le traduciamo a render.
+const LESSON_DOW = [["mon", 1], ["tue", 2], ["wed", 3], ["thu", 4], ["fri", 5], ["sat", 6], ["sun", 0]];
+function dowLabel(k) { return t("social.dow_" + k); }
+// La PRIMA voce di ogni fascia resta la chiave canonica (persistita in lessonFilter.bands e
+// confrontata in slotMatchesAvail); l'etichetta visibile è tradotta a render.
 const LESSON_BANDS = [["Mattina", 6, 12], ["Pomeriggio", 12, 18], ["Sera", 18, 24]];
+const LESSON_BAND_KEYS = { "Mattina": "social.band_morning", "Pomeriggio": "social.band_afternoon", "Sera": "social.band_evening" };
+function bandLabel(k) { return LESSON_BAND_KEYS[k] ? t(LESSON_BAND_KEYS[k]) : k; }
 function teacherInstruments() { const set = new Set(); allTeachers().forEach(t => (t.instruments || []).forEach(i => set.add(i))); return [...set].sort(); }
 function slotMatchesAvail(s) {
   if (lessonFilter.days.length) { const d = new Date(s.date + "T00:00:00").getDay(); if (!lessonFilter.days.includes(d)) return false; }
@@ -1011,27 +1073,27 @@ function renderLessons(box) {
     return jammed || aff >= 75;
   }).sort((a, b) => lessonRelevance(b) - lessonRelevance(a) || cmpId(a.id, b.id)).slice(0, 3);
   box.appendChild(el(`<div>
-    <h1 class="view-title">${ic('graduation-cap')} Lezioni</h1>
-    <p class="view-sub">Trova un insegnante, prenoti e <b>paghi online</b> (pagamento simulato in questo prototipo).</p>
+    <h1 class="view-title">${ic('graduation-cap')} ${esc(t("social.lessons_title"))}</h1>
+    <p class="view-sub">${t("social.lessons_sub")}</p>
     <div class="card flat">
-      <div class="row-between"><b>${ic('graduation-cap')} Insegni uno strumento?</b>${state.teacher ? '<span class="tag lvl">attivo</span>' : '<span class="badge-new">novità</span>'}</div>
-      <p class="view-sub" style="margin:8px 0 10px">Pubblica le tue disponibilità a calendario e ricevi prenotazioni pagate.</p>
-      <button class="btn small" id="beTeacher">${state.teacher ? "Gestisci le mie disponibilità" : "Diventa insegnante"}</button>
+      <div class="row-between"><b>${ic('graduation-cap')} ${esc(t("social.teach_an_instrument"))}</b>${state.teacher ? `<span class="tag lvl">${esc(t("social.active"))}</span>` : `<span class="badge-new">${esc(t("social.new_badge"))}</span>`}</div>
+      <p class="view-sub" style="margin:8px 0 10px">${esc(t("social.teacher_pitch"))}</p>
+      <button class="btn small" id="beTeacher">${ic('graduation-cap')} ${state.teacher ? esc(t("social.manage_availability")) : esc(t("social.become_teacher"))}</button>
     </div>
-    ${myBk.length ? `<div class="section-label">Le mie lezioni prenotate</div><div id="myLessons"></div>` : ""}
-    ${sceneTeachers.length ? `<div class="section-label">${ic('match')} Insegnanti nella tua scena</div><div id="sceneTeachers"></div>` : ""}
-    <div class="section-label">Trova un insegnante</div>
+    ${myBk.length ? `<div class="section-label">${esc(t("social.my_booked_lessons"))}</div><div id="myLessons"></div>` : ""}
+    ${sceneTeachers.length ? `<div class="section-label">${ic('match')} ${esc(t("social.teachers_in_your_scene"))}</div><div id="sceneTeachers"></div>` : ""}
+    <div class="section-label">${esc(t("social.find_a_teacher"))}</div>
     <div class="filters">
       <div class="filter-row">
-        <select id="lfIns" aria-label="Strumento"><option value="">Tutti gli strumenti</option>${insOpts.map(i => `<option value="${esc(i)}"${i === lessonFilter.instrument ? " selected" : ""}>${esc(i)}</option>`).join("")}</select>
-        <select id="lfMode" aria-label="Modalità"><option value=""${lessonFilter.mode === "" ? " selected" : ""}>Online + presenza</option><option value="presenza"${lessonFilter.mode === "presenza" ? " selected" : ""}>Solo in presenza</option><option value="online"${lessonFilter.mode === "online" ? " selected" : ""}>Solo online</option></select>
+        <select id="lfIns" aria-label="${esc(t("social.instrument"))}"><option value="">${esc(t("social.all_instruments"))}</option>${insOpts.map(i => `<option value="${esc(i)}"${i === lessonFilter.instrument ? " selected" : ""}>${esc(vocabLabel(i))}</option>`).join("")}</select>
+        <select id="lfMode" aria-label="${esc(t("social.mode"))}"><option value=""${lessonFilter.mode === "" ? " selected" : ""}>${esc(t("social.mode_both"))}</option><option value="presenza"${lessonFilter.mode === "presenza" ? " selected" : ""}>${esc(t("social.mode_inperson"))}</option><option value="online"${lessonFilter.mode === "online" ? " selected" : ""}>${esc(t("social.mode_online"))}</option></select>
       </div>
-      <label class="field" style="margin-top:6px" id="lfDaysLbl">Giorni</label>
-      <div class="chips" id="lfDays" role="group" aria-labelledby="lfDaysLbl">${LESSON_DOW.map(([lbl, d]) => `<button type="button" class="chip${lessonFilter.days.includes(d) ? " on" : ""}" data-chip="${d}" aria-pressed="${lessonFilter.days.includes(d)}">${lbl}</button>`).join("")}</div>
-      <label class="field" style="margin-top:8px" id="lfBandsLbl">Fascia oraria</label>
-      <div class="chips" id="lfBands" role="group" aria-labelledby="lfBandsLbl">${LESSON_BANDS.map(([lbl]) => `<button type="button" class="chip${lessonFilter.bands.includes(lbl) ? " on" : ""}" data-chip="${esc(lbl)}" aria-pressed="${lessonFilter.bands.includes(lbl)}">${lbl}</button>`).join("")}</div>
-      <label class="field" style="margin-top:8px" for="lfPrice">Prezzo max: <span class="range-val" id="lfPriceVal">${lessonFilter.maxPrice ? lessonFilter.maxPrice + "€/ora" : "qualsiasi"}</span></label>
-      <input type="range" id="lfPrice" min="0" max="80" step="5" value="${lessonFilter.maxPrice}" aria-label="Prezzo massimo per ora">
+      <label class="field" style="margin-top:6px" id="lfDaysLbl">${esc(t("social.days"))}</label>
+      <div class="chips" id="lfDays" role="group" aria-labelledby="lfDaysLbl">${LESSON_DOW.map(([lbl, d]) => `<button type="button" class="chip${lessonFilter.days.includes(d) ? " on" : ""}" data-chip="${d}" aria-pressed="${lessonFilter.days.includes(d)}">${esc(dowLabel(lbl))}</button>`).join("")}</div>
+      <label class="field" style="margin-top:8px" id="lfBandsLbl">${esc(t("social.time_band"))}</label>
+      <div class="chips" id="lfBands" role="group" aria-labelledby="lfBandsLbl">${LESSON_BANDS.map(([lbl]) => `<button type="button" class="chip${lessonFilter.bands.includes(lbl) ? " on" : ""}" data-chip="${esc(lbl)}" aria-pressed="${lessonFilter.bands.includes(lbl)}">${esc(bandLabel(lbl))}</button>`).join("")}</div>
+      <label class="field" style="margin-top:8px" for="lfPrice">${esc(t("social.max_price"))} <span class="range-val" id="lfPriceVal">${lessonFilter.maxPrice ? t("social.price_per_hour", { price: lessonFilter.maxPrice }) : t("social.any")}</span></label>
+      <input type="range" id="lfPrice" min="0" max="80" step="5" value="${lessonFilter.maxPrice}" aria-label="${esc(t("social.max_price_per_hour_aria"))}">
     </div>
     <div id="teacherList"></div>
   </div>`));
@@ -1049,7 +1111,7 @@ function renderLessons(box) {
     const list = allTeachers().filter(teacherMatchesLessonFilter)
       .map(t => ({ t, score: lessonRelevance(t) }))
       .sort((a, b) => b.score - a.score || cmpId(a.t.id, b.t.id));
-    if (!list.length) { tl.innerHTML = `<div class="empty">Nessun insegnante con questi filtri. Allarga i criteri. ${ic('search')}</div>`; return; }
+    if (!list.length) { tl.innerHTML = `<div class="empty">${esc(t("social.no_teachers_filters"))} ${ic('search')}</div>`; return; }
     list.forEach(({ t }) => tl.appendChild(teacherCard(t)));
   };
   $("#lfIns").onchange = e => { lessonFilter.instrument = e.target.value; paintTeachers(); };
@@ -1062,7 +1124,7 @@ function renderLessons(box) {
   });
   // Fasce: chiavi stringa → toggleChip (app.js) gestisce array + aria-pressed.
   box.querySelectorAll("#lfBands .chip").forEach(c => c.onclick = () => { toggleChip(c, lessonFilter.bands); paintTeachers(); });
-  $("#lfPrice").oninput = e => { lessonFilter.maxPrice = +e.target.value; $("#lfPriceVal").textContent = lessonFilter.maxPrice ? lessonFilter.maxPrice + "€/ora" : "qualsiasi"; };
+  $("#lfPrice").oninput = e => { lessonFilter.maxPrice = +e.target.value; $("#lfPriceVal").textContent = lessonFilter.maxPrice ? t("social.price_per_hour", { price: lessonFilter.maxPrice }) : t("social.any"); };
   $("#lfPrice").onchange = paintTeachers;
   applyToggleA11y(box);
   paintTeachers();
@@ -1073,23 +1135,23 @@ function lessonBookingRow(b) {
   const done = st === "completata";
   const live = st === "confirmed"; // confermata e futura: ancora disdicibile / videolezione attiva
   const actions = [];
-  if (done && !b.reviewed) actions.push(`<button class="btn small" data-review>${ic('star')} Valuta insegnante</button>`);
-  if (live) actions.push(`<button class="btn small secondary" data-cancel>Disdici</button>`);
-  const reviewedBadge = b.reviewed ? `<span class="tag lvl" style="margin-top:10px;display:inline-block">${ic('check')} Insegnante valutato</span>` : "";
+  if (done && !b.reviewed) actions.push(`<button class="btn small" data-review>${ic('star')} ${esc(t("social.rate_teacher"))}</button>`);
+  if (live) actions.push(`<button class="btn small secondary" data-cancel>${ic('x')} ${esc(t("social.cancel_lesson"))}</button>`);
+  const reviewedBadge = b.reviewed ? `<span class="tag lvl" style="margin-top:10px;display:inline-block">${ic('check')} ${esc(t("social.teacher_rated"))}</span>` : "";
   // Videolezione/cambio link solo su lezioni vive (non passate, non disdette).
   const meetingRow = (b.online && b.meetingUrl && live) ? `<div class="filter-row" style="margin-top:10px">
-      <button class="btn small" data-video>${ic('video')} Videolezione</button>
-      <button class="btn small secondary" data-editlink>${ic('send')} Cambia link</button>
-    </div>` : (b.online && live ? `<div class="filter-row" style="margin-top:10px"><button class="btn small secondary" data-editlink>${ic('send')} Aggiungi link videolezione</button></div>` : "");
+      <button class="btn small" data-video>${ic('video')} ${esc(t("social.video_lesson"))}</button>
+      <button class="btn small secondary" data-editlink>${ic('send')} ${esc(t("social.change_link"))}</button>
+    </div>` : (b.online && live ? `<div class="filter-row" style="margin-top:10px"><button class="btn small secondary" data-editlink>${ic('send')} ${esc(t("social.add_video_link"))}</button></div>` : "");
   const tagCls = cancelled ? "" : done ? "lvl done" : "lvl";
-  const tagTxt = cancelled ? "disdetta" : done ? `${ic('check')} completata` : "confermata";
+  const tagTxt = cancelled ? esc(t("social.status_cancelled")) : done ? `${ic('check')} ${esc(t("social.status_completed"))}` : esc(t("social.status_confirmed"));
   // Stato pagamento letto in modo difensivo (retro-compat bookings legacy senza payment).
   const payStatus = (b.payment && b.payment.status) || (cancelled ? "refunded" : "paid");
-  const payLabel = payStatus === "refunded" ? `${ic('refresh')} rimborsato` : `${ic('check')} pagato`;
+  const payLabel = payStatus === "refunded" ? `${ic('refresh')} ${esc(t("social.refunded"))}` : `${ic('check')} ${esc(t("social.paid"))}`;
   const row = el(`<div class="card flat" style="margin-bottom:8px${cancelled ? ";opacity:.6" : ""}">
     <div class="card-head">${avatarTag(b)}<div class="meta">
-      <div class="name">${esc(b.teacherName)} <span class="tag ${tagCls}">${tagTxt}</span> ${b.online && !cancelled ? `<span class="badge-online">${ic('video')} online</span>` : ""}</div>
-      <div class="loc">${ic('calendar')} ${formatDate(b.date)} · ${esc(b.time)} · ${b.amount}€ · ${payLabel} <span class="loc" style="opacity:.7">· simulato</span></div></div></div>
+      <div class="name">${esc(b.teacherName)} <span class="tag ${tagCls}">${tagTxt}</span> ${b.online && !cancelled ? `<span class="badge-online">${ic('video')} ${esc(t("social.online"))}</span>` : ""}</div>
+      <div class="loc">${ic('calendar')} ${formatDate(b.date)} · ${esc(b.time)} · ${b.amount}€ · ${payLabel} <span class="loc" style="opacity:.7">· ${esc(t("social.simulated"))}</span></div></div></div>
     ${meetingRow}
     ${actions.length ? `<div class="filter-row" style="margin-top:10px">${actions.join("")}</div>` : ""}
     ${reviewedBadge}
@@ -1107,12 +1169,12 @@ function lessonBookingRow(b) {
 // Modale conferma disdetta (sostituisce confirm() nativo). // backend hook: POST /bookings/:id/cancel (politica rimborso)
 function openCancelLesson(b) {
   openModal(`
-    <h2 style="margin-top:0">${ic('alert-triangle')} Disdire la lezione?</h2>
-    <div class="aff-note">Con <b>${esc(b.teacherName.split(" ")[0])}</b> · ${formatDate(b.date)} · ${esc(b.time)}.</div>
-    <p style="line-height:1.5;color:var(--muted);margin:10px 0 0">L'orario tornerà <b>libero</b> per altri allievi e il pagamento sarà <b>rimborsato</b> (simulato in questo prototipo).</p>
+    <h2 style="margin-top:0">${ic('alert-triangle')} ${esc(t("social.cancel_lesson_title"))}</h2>
+    <div class="aff-note">${t("social.cancel_lesson_with", { name: esc(b.teacherName.split(" ")[0]), date: formatDate(b.date), time: esc(b.time) })}</div>
+    <p style="line-height:1.5;color:var(--muted);margin:10px 0 0">${t("social.cancel_lesson_body")}</p>
     <div class="confirm-actions">
-      <button class="btn secondary" id="clNo" type="button">Annulla</button>
-      <button class="btn danger" id="clYes" type="button">Disdici</button>
+      <button class="btn secondary" id="clNo" type="button">${esc(t("social.cancel"))}</button>
+      <button class="btn danger" id="clYes" type="button">${esc(t("social.cancel_lesson"))}</button>
     </div>
   `);
   $("#clNo").onclick = () => closeModal();
@@ -1120,8 +1182,8 @@ function openCancelLesson(b) {
     b.status = "cancelled";
     b.refund = true;
     b.payment = Object.assign({ method: "card", amount: b.amount }, b.payment || {}, { status: "refunded", refundedAt: Date.now() }); // backend hook: refund (conserva l'ora del pagamento, traccia refundedAt)
-    save(); closeModal(); toast("Lezione disdetta — orario di nuovo libero", ic('refresh'));
-    if (typeof notify === "function") notify("graduation-cap", `Hai disdetto la lezione con ${b.teacherName.split(" ")[0]}.`, { view: "lessons" });
+    save(); closeModal(); toast(t("social.lesson_cancelled_toast"), ic('refresh'));
+    if (typeof notify === "function") notify("graduation-cap", t("social.notif_lesson_cancelled", { name: b.teacherName.split(" ")[0] }), { view: "lessons" });
     // BACKEND HOOK: alla disdetta, notifica l'INSEGNANTE (lato server, instradata al destinatario — non al feed dell'allievo).
     rerenderLessons();
   };
@@ -1129,37 +1191,41 @@ function openCancelLesson(b) {
 // Modale cambio/aggiunta link videolezione (sostituisce prompt() nativo). // backend hook: PATCH /bookings/:id {meetingUrl}
 function openEditMeetingLink(b) {
   openModal(`
-    <h2 style="margin-top:0">${ic('video')} Link videolezione</h2>
-    <div class="aff-note">Incolla un link Zoom, Meet o Jitsi. Lascialo vuoto per rimuoverlo.</div>
-    <label class="field" style="margin-top:12px" for="emlUrl">Link videolezione</label>
+    <h2 style="margin-top:0">${ic('video')} ${esc(t("social.video_link"))}</h2>
+    <div class="aff-note">${esc(t("social.video_link_note"))}</div>
+    <label class="field" style="margin-top:12px" for="emlUrl">${esc(t("social.video_link"))}</label>
     <input type="url" id="emlUrl" placeholder="https://…" value="${esc(b.meetingUrl || "")}">
     <div class="confirm-actions">
-      <button class="btn secondary" id="emlNo" type="button">Annulla</button>
-      <button class="btn" id="emlYes" type="button">${ic('save')} Salva</button>
+      <button class="btn secondary" id="emlNo" type="button">${esc(t("social.cancel"))}</button>
+      <button class="btn" id="emlYes" type="button">${ic('save')} ${esc(t("social.save"))}</button>
     </div>
   `);
   $("#emlNo").onclick = () => closeModal();
   $("#emlYes").onclick = () => {
     const u = ($("#emlUrl").value || "").trim();
-    if (u && !/^https?:\/\//i.test(u)) return markFieldError("#emlUrl", "Inserisci un link valido (http/https).");
-    b.meetingUrl = u; save(); closeModal(); toast(u ? "Link aggiornato" : "Link rimosso", ic('check', 'ok')); rerenderLessons();
+    if (u && !/^https?:\/\//i.test(u)) return markFieldError("#emlUrl", t("social.invalid_link"));
+    b.meetingUrl = u; save(); closeModal(); toast(u ? t("social.link_updated") : t("social.link_removed"), ic('check', 'ok')); rerenderLessons();
   };
 }
+// Come per i JAMMATE_TAGS: i VALORI restano canonici (data-chip + persistiti in reviewTags,
+// letti anche altrove), si traduce solo l'etichetta visibile.
 const TEACHER_TAGS = ["Spiega chiaro", "Paziente", "Preparato", "Puntuale", "Motivante", "Materiale utile"];
+const TEACHER_TAG_KEYS = { "Spiega chiaro": "social.ttag_clear", "Paziente": "social.ttag_patient", "Preparato": "social.ttag_prepared", "Puntuale": "social.ttag_punctual", "Motivante": "social.ttag_motivating", "Materiale utile": "social.ttag_material" };
+function teacherTagLabel(v) { return TEACHER_TAG_KEYS[v] ? t(TEACHER_TAG_KEYS[v]) : v; }
 function openTeacherReview(b) {
   const likert = (name, label, icoMarkup) => `<div class="lk"><div class="lk-q" id="lk-${name}">${icoMarkup} ${esc(label)}</div>
-    <div class="likert" data-name="${name}" role="radiogroup" aria-labelledby="lk-${name}">${[1, 2, 3, 4, 5].map(v => `<button type="button" role="radio" data-v="${v}" aria-label="${v} su 5" aria-checked="${v === 4 ? "true" : "false"}" class="${v === 4 ? "on" : ""}">${v}</button>`).join("")}</div></div>`;
+    <div class="likert" data-name="${name}" role="radiogroup" aria-labelledby="lk-${name}">${[1, 2, 3, 4, 5].map(v => `<button type="button" role="radio" data-v="${v}" aria-label="${esc(t("social.rating_aria", { v }))}" aria-checked="${v === 4 ? "true" : "false"}" class="${v === 4 ? "on" : ""}">${v}</button>`).join("")}</div></div>`;
   openModal(`
-    <h2>${ic('star')} Valuta ${esc(b.teacherName.split(" ")[0])}</h2>
-    <div class="aff-note">Feedback <b>verificato</b>: sbloccato dopo la lezione del ${formatDate(b.date)}. Aiuta gli altri allievi a scegliere.</div>
-    ${likert("did", "Didattica / chiarezza", ic('graduation-cap'))}
-    ${likert("prep", "Preparazione", ic('sparkles'))}
-    ${likert("punt", "Puntualità", ic('clock'))}
-    ${likert("disp", "Disponibilità", ic('thumbs-up'))}
-    <div class="section-label">Tag rapidi</div>
-    <div class="chips" id="trTags" role="group" aria-label="Tag rapidi">${TEACHER_TAGS.map(t => `<button type="button" class="chip" data-chip="${esc(t)}" aria-pressed="false">${esc(t)}</button>`).join("")}</div>
-    <label class="field" style="margin-top:10px" for="trText">Commento (opzionale)</label><textarea id="trText" placeholder="Com'è andata la lezione?"></textarea>
-    <button class="btn" id="trSave" style="margin-top:14px">Invia valutazione</button>
+    <h2>${ic('star')} ${t("social.rate_person", { name: esc(b.teacherName.split(" ")[0]) })}</h2>
+    <div class="aff-note">${t("social.teacher_review_note", { date: formatDate(b.date) })}</div>
+    ${likert("did", t("social.lk_teaching"), ic('graduation-cap'))}
+    ${likert("prep", t("social.lk_preparation"), ic('sparkles'))}
+    ${likert("punt", t("social.lk_punctuality"), ic('clock'))}
+    ${likert("disp", t("social.lk_availability"), ic('thumbs-up'))}
+    <div class="section-label">${esc(t("social.quick_tags"))}</div>
+    <div class="chips" id="trTags" role="group" aria-label="${esc(t("social.quick_tags"))}">${TEACHER_TAGS.map(tg => `<button type="button" class="chip" data-chip="${esc(tg)}" aria-pressed="false">${esc(teacherTagLabel(tg))}</button>`).join("")}</div>
+    <label class="field" style="margin-top:10px" for="trText">${esc(t("social.comment_optional"))}</label><textarea id="trText" placeholder="${esc(t("social.how_was_lesson"))}"></textarea>
+    <button class="btn" id="trSave" style="margin-top:14px">${esc(t("social.send_review"))}</button>
   `);
   const root = $("#modalRoot");
   root.querySelectorAll(".likert").forEach(rw => rw.querySelectorAll("button").forEach(bn => bn.onclick = () => { rw.querySelectorAll("button").forEach(x => { x.classList.remove("on"); x.setAttribute("aria-checked", "false"); }); bn.classList.add("on"); bn.setAttribute("aria-checked", "true"); }));
@@ -1188,7 +1254,7 @@ function openTeacherReview(b) {
       state.teacherStats[b.teacherId] = st;
     }
     b.reviewed = true; b.reviewRating = Math.round(overall * 10); b.reviewText = $("#trText").value.trim();
-    save(); closeModal(); toast("Valutazione inviata", ic('star')); rerenderLessons();
+    save(); closeModal(); toast(t("social.review_sent"), ic('star')); rerenderLessons();
   };
 }
 function teacherCard(t) {
@@ -1196,15 +1262,15 @@ function teacherCard(t) {
   const relLabel = lessonRelevanceLabel(t);
   const peer = teacherPeer(t);
   const jammed = peer && typeof hasJammedWith === "function" && hasJammedWith(peer);
-  const ratingMarkup = t.mine ? '<span class="tag">tu</span>'
-    : (t.ratings ? `<span class="score">${starsRating(t.rating / 10, 5)} ${(t.rating / 10).toFixed(1)}</span>` : `<span class="loc" style="font-size:.72rem">nuovo</span>`);
+  const ratingMarkup = t.mine ? `<span class="tag">${esc(window.t("social.you_short"))}</span>`
+    : (t.ratings ? `<span class="score">${starsRating(t.rating / 10, 5)} ${(t.rating / 10).toFixed(1)}</span>` : `<span class="loc" style="font-size:.72rem">${esc(window.t("social.new_teacher"))}</span>`);
   const c = el(`<div class="card teacher-card">
     <div class="card-head">${avatarTag(t)}<div class="meta">
       <div class="name">${esc(t.name)} ${ratingMarkup} ${relLabel ? risonanzaChip(relLabel) : ""}</div>
-      <div class="loc">${esc((t.instruments || []).join(", "))} · ${ic('map-pin')} ${esc(t.city)}${t.online ? ` · <span class="badge-online">${ic('video')} online</span>` : ""}</div>
-      ${jammed ? `<div class="loc" style="margin-top:3px">${ic('match')} Avete già jammato${peer && typeof affLabel === "function" ? ` · ${affLabel(getAffinity(peer))}` : ""}</div>` : ""}</div>
-      <div style="text-align:right;font-weight:800;color:var(--accent)">${t.hourly}€<br><small style="color:var(--muted);font-weight:600">/ ora</small></div></div>
-    <div class="loc" style="margin-top:8px">${ic('calendar')} ${free} slot liber${free === 1 ? "o" : "i"}</div>
+      <div class="loc">${esc((t.instruments || []).map(vocabLabel).join(", "))} · ${ic('map-pin')} ${esc(t.city)}${t.online ? ` · <span class="badge-online">${ic('video')} ${esc(window.t("social.online"))}</span>` : ""}</div>
+      ${jammed ? `<div class="loc" style="margin-top:3px">${ic('match')} ${esc(window.t("social.already_jammed"))}${peer && typeof affLabel === "function" ? ` · ${affLabel(getAffinity(peer))}` : ""}</div>` : ""}</div>
+      <div style="text-align:right;font-weight:800;color:var(--accent)">${t.hourly}€<br><small style="color:var(--muted);font-weight:600">${esc(window.t("social.per_hour_short"))}</small></div></div>
+    <div class="loc" style="margin-top:8px">${ic('calendar')} ${free === 1 ? window.t("social.free_slots_one", { n: free }) : window.t("social.free_slots_other", { n: free })}</div>
   </div>`);
   clickableCard(c, () => openTeacherProfile(t));
   return c;
@@ -1214,20 +1280,20 @@ function openTeacherProfile(t) {
   const peer = teacherPeer(t);
   const jammed = peer && typeof hasJammedWith === "function" && hasJammedWith(peer);
   const sceneRow = (!t.mine && peer && typeof affLabel === "function")
-    ? `<div class="aff-note" style="margin-top:10px">${jammed ? `${ic('match')} Avete già jammato · ` : ""}${affLabel(getAffinity(peer))}</div>` : "";
+    ? `<div class="aff-note" style="margin-top:10px">${jammed ? `${ic('match')} ${esc(window.t("social.already_jammed"))} · ` : ""}${affLabel(getAffinity(peer))}</div>` : "";
   openModal(`
     <div style="text-align:center"><div style="display:flex;justify-content:center">${avatarTag(t, true)}</div>
       <h2>${esc(t.name)}</h2>
-      <div class="loc">${esc((t.instruments || []).join(", "))} · ${ic('map-pin')} ${esc(t.city)}${t.online ? ` · <span class="badge-online">${ic('video')} online</span>` : ""}</div>
-      <div style="margin-top:6px;font-weight:800;color:var(--accent)">${t.hourly}€ / ora</div>
+      <div class="loc">${esc((t.instruments || []).map(vocabLabel).join(", "))} · ${ic('map-pin')} ${esc(t.city)}${t.online ? ` · <span class="badge-online">${ic('video')} ${esc(window.t("social.online"))}</span>` : ""}</div>
+      <div style="margin-top:6px;font-weight:800;color:var(--accent)">${window.t("social.price_per_hour", { price: t.hourly })}</div>
     </div>
     ${sceneRow}
-    ${t.bio ? `<div class="section-label">Su di me</div><p style="margin:0;line-height:1.5">${esc(t.bio)}</p>` : ""}
-    <div class="section-label">Valutazioni degli allievi</div>
-    <div class="aff-note">${t.ratings ? `${starsRating(t.rating / 10, 5)} <b>${(t.rating / 10).toFixed(1)}</b> su ${t.ratings} valutazion${t.ratings === 1 ? "e" : "i"} verificate${t.reviewTags && Object.keys(t.reviewTags).length ? ` · ${esc(Object.entries(t.reviewTags).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([x]) => x).join(", "))}` : ""}` : "Ancora nessuna valutazione — solo chi ha fatto lezione può recensire."}</div>
-    <div class="section-label">Disponibilità</div>
-    ${free.length ? `<div id="slotPick" class="slot-grid" role="group" aria-label="Slot disponibili">${free.map(s => `<button class="slot-btn" data-slot="${esc(s.id)}">${ic('calendar')} ${formatDate(s.date)}<br>${esc(s.time)}</button>`).join("")}</div>` : `<div class="aff-note">Nessuno slot libero al momento.</div>`}
-    ${t.mine ? `<div class="aff-note" style="margin-top:12px">Questo è il tuo profilo insegnante.</div>` : ""}
+    ${t.bio ? `<div class="section-label">${esc(window.t("social.about_me"))}</div><p style="margin:0;line-height:1.5">${esc(t.bio)}</p>` : ""}
+    <div class="section-label">${esc(window.t("social.student_ratings"))}</div>
+    <div class="aff-note">${t.ratings ? `${starsRating(t.rating / 10, 5)} <b>${(t.rating / 10).toFixed(1)}</b> ${t.ratings === 1 ? window.t("social.verified_ratings_one", { n: t.ratings }) : window.t("social.verified_ratings_other", { n: t.ratings })}${t.reviewTags && Object.keys(t.reviewTags).length ? ` · ${esc(Object.entries(t.reviewTags).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([x]) => teacherTagLabel(x)).join(", "))}` : ""}` : esc(window.t("social.no_ratings_yet"))}</div>
+    <div class="section-label">${esc(window.t("social.availability"))}</div>
+    ${free.length ? `<div id="slotPick" class="slot-grid" role="group" aria-label="${esc(window.t("social.available_slots"))}">${free.map(s => `<button class="slot-btn" data-slot="${esc(s.id)}">${ic('calendar')} ${formatDate(s.date)}<br>${esc(s.time)}</button>`).join("")}</div>` : `<div class="aff-note">${esc(window.t("social.no_free_slots"))}</div>`}
+    ${t.mine ? `<div class="aff-note" style="margin-top:12px">${esc(window.t("social.your_teacher_profile"))}</div>` : ""}
   `);
   if (!t.mine) document.querySelectorAll("#slotPick .slot-btn").forEach(b => b.onclick = () => { const s = (t.slots || []).find(x => x.id === b.dataset.slot); if (s) openBookLesson(t, s); });
 }
@@ -1242,44 +1308,55 @@ function slotsOverlap(d1, t1, d2, t2) {
 function openBookLesson(t, s) {
   const fee = t.hourly, comm = Math.round(fee * 0.1);
   openModal(`
-    <h2>${ic('graduation-cap')} Prenota lezione</h2>
+    <h2>${ic('graduation-cap')} ${esc(window.t("social.book_lesson"))}</h2>
     <div class="aff-note">${esc(t.name)} · ${ic('calendar')} ${formatDate(s.date)} · ${esc(s.time)}</div>
     <div class="card flat" style="margin-top:12px">
-      <div class="row-between"><span>Lezione (1 ora)</span><b>${fee}€</b></div>
-      <div class="row-between"><span class="loc">di cui commissione JamMate (10%)</span><span class="loc">${comm}€</span></div>
+      <div class="row-between"><span>${esc(window.t("social.lesson_one_hour"))}</span><b>${fee}€</b></div>
+      <div class="row-between"><span class="loc">${esc(window.t("social.commission_line"))}</span><span class="loc">${comm}€</span></div>
     </div>
-    ${t.online ? `<div class="aff-note" style="margin-top:10px"><span class="badge-online">${ic('video')} online</span> Lezione <b>online</b>: alla conferma generiamo un <b>link videolezione</b> (Jitsi, gratuito) — modificabile col tuo Zoom/Meet — e potrai aggiungerla al calendario.</div>` : ""}
-    <div class="aff-note" style="margin-top:10px">Pagamento <b>simulato</b> in questo prototipo (in produzione: carta via Stripe, importo in escrow fino alla lezione).</div>
-    <button class="btn" id="payLesson" style="margin-top:14px">${ic('check')} Paga ${fee}€ e prenota</button>
+    ${t.online ? `<div class="aff-note" style="margin-top:10px"><span class="badge-online">${ic('video')} ${esc(window.t("social.online"))}</span> ${window.t("social.online_lesson_note")}</div>` : ""}
+    <div class="aff-note" style="margin-top:10px">${window.t("social.payment_simulated_note")}</div>
+    <button class="btn" id="payLesson" style="margin-top:14px">${ic('check')} ${window.t("social.pay_and_book", { fee })}</button>
   `);
-  $("#payLesson").onclick = () => {
+  $("#payLesson").onclick = async () => {
     // clash-check su intervalli [time, time+60min] (sovrapposizioni parziali, non solo data+ora esatte).
     const clash = (state.lessonBookings || []).some(b => b.status === "confirmed" && slotsOverlap(b.date, b.time, s.date, s.time));
-    if (clash) { toast("Hai già una lezione in quell'orario", ic('alert-triangle')); return; }
+    if (clash) { toast(window.t("social.lesson_time_clash"), ic('alert-triangle')); return; }
     // Anti doppia-vendita dello slot: se un altro allievo l'ha già preso (deriva dalle bookings).
-    if (isSlotBooked(t, s)) { toast("Slot appena prenotato da un altro allievo", ic('alert-triangle')); rerenderLessons(); return; }
-    const id = "lb" + Date.now();
+    if (isSlotBooked(t, s)) { toast(window.t("social.slot_just_booked"), ic('alert-triangle')); rerenderLessons(); return; }
+    let id = "lb" + Date.now();
+    let remoteBooking = null;
+    if (typeof isProductionRuntime === "function" && isProductionRuntime()) {
+      try {
+        remoteBooking = await JM.Api.lessons.book(s.id);
+        id = remoteBooking.id;
+      } catch (error) {
+        return toast(error.message || "Prenotazione non riuscita", ic("alert-triangle"), { error: true });
+      }
+    }
     // backend hook: createPaymentIntent — qui pagamento simulato; lo schema payment è pronto per il PSP/escrow.
-    const payment = { status: "paid", method: "card", txnId: "sim_" + id, amount: fee, fee: comm, at: Date.now() };
+    const payment = remoteBooking
+      ? { status: "pending", method: "server", txnId: String(id), amount: remoteBooking.amountCents / 100, fee: comm, at: Date.now() }
+      : { status: "paid", method: "card", txnId: "sim_" + id, amount: fee, fee: comm, at: Date.now() };
     const bk = { id, teacherId: t.id, teacherName: t.name, avatar: t.avatar, color: t.color, date: s.date, time: s.time, amount: fee, status: "confirmed", online: !!t.online, meetingUrl: t.online ? jitsiUrl(id) : "", payment, refund: false };
     state.lessonBookings = state.lessonBookings || []; state.lessonBookings.unshift(bk); save();
-    notify("graduation-cap", `Lezione con ${t.name.split(" ")[0]} confermata: ${formatDate(s.date)} alle ${s.time}.`, { view: "lessons" });
+    notify("graduation-cap", window.t("social.notif_lesson_confirmed", { name: t.name.split(" ")[0], date: formatDate(s.date), time: s.time }), { view: "lessons" });
     // BACKEND HOOK: alla prenotazione, notifica l'INSEGNANTE (lato server, instradata al destinatario — non al feed dell'allievo).
     // Mini-ricevuta post-pagamento (txnId, importo, commissione).
     openModal(`
       <div style="text-align:center">
-        <div class="vl-badge">${ic('check')} Lezione prenotata</div>
-        <h2 style="margin-top:8px">Pagamento confermato</h2>
-        <div class="loc">${ic('calendar')} ${formatDate(s.date)} · ${esc(s.time)} · con ${esc(t.name.split(" ")[0])}</div>
+        <div class="vl-badge">${ic('check')} ${esc(window.t("social.lesson_booked"))}</div>
+        <h2 style="margin-top:8px">${esc(window.t("social.payment_confirmed"))}</h2>
+        <div class="loc">${ic('calendar')} ${formatDate(s.date)} · ${esc(s.time)} · ${window.t("social.with_name", { name: esc(t.name.split(" ")[0]) })}</div>
       </div>
       <div class="card flat" style="margin-top:14px">
-        <div class="row-between"><span>Importo</span><b>${fee}€</b></div>
-        <div class="row-between"><span class="loc">Commissione JamMate (10%)</span><span class="loc">${comm}€</span></div>
-        <div class="row-between"><span class="loc">Transazione</span><span class="loc">${esc(payment.txnId)}</span></div>
-        <div class="row-between"><span class="loc">Stato</span><span class="loc">${ic('check')} pagato (simulato)</span></div>
+        <div class="row-between"><span>${esc(window.t("social.amount"))}</span><b>${fee}€</b></div>
+        <div class="row-between"><span class="loc">${esc(window.t("social.commission_jammate"))}</span><span class="loc">${comm}€</span></div>
+        <div class="row-between"><span class="loc">${esc(window.t("social.transaction"))}</span><span class="loc">${esc(payment.txnId)}</span></div>
+        <div class="row-between"><span class="loc">${esc(window.t("social.status"))}</span><span class="loc">${ic('check')} ${esc(window.t("social.paid_simulated"))}</span></div>
       </div>
-      ${t.online ? `<button class="btn" id="rcVideo" style="margin-top:14px">${ic('video')} Apri videolezione</button>` : ""}
-      <button class="btn secondary" id="rcClose" style="margin-top:10px">Chiudi</button>
+      ${t.online ? `<button class="btn" id="rcVideo" style="margin-top:14px">${ic('video')} ${esc(window.t("social.open_video_lesson"))}</button>` : ""}
+      <button class="btn secondary" id="rcClose" style="margin-top:10px">${esc(window.t("social.close"))}</button>
     `);
     haptic("Light");
     const rcv = $("#rcVideo"); if (rcv) rcv.onclick = () => openVideoLesson(bk);
@@ -1290,35 +1367,49 @@ function openBookLesson(t, s) {
 function openTeacherSheet() {
   const t = state.teacher;
   openModal(`
-    <h2>${ic('graduation-cap')} ${t ? "Le mie disponibilità" : "Diventa insegnante"}</h2>
-    <label class="field">Strumenti che insegni <span class="view-sub" style="font-size:.76rem">· presi dal tuo profilo, modificabili</span></label><div id="teIns"></div>
-    <label class="field" style="margin-top:10px">Tariffa oraria (€)</label><input type="number" id="teFee" value="${t ? t.hourly : 30}" min="5">
-    <label class="field" style="margin-top:10px">Presentazione</label><textarea id="teBio" placeholder="Esperienza, metodo, livelli che segui…">${t ? esc(t.bio) : ""}</textarea>
-    <label class="field" style="margin-top:10px;display:flex;align-items:center;gap:8px"><input type="checkbox" id="teOnline" ${t && t.online ? "checked" : ""}> Disponibile anche online</label>
-    <div class="section-label">Aggiungi uno slot a calendario</div>
+    <h2>${ic('graduation-cap')} ${t ? esc(window.t("social.my_availability")) : esc(window.t("social.become_teacher"))}</h2>
+    <label class="field">${window.t("social.instruments_you_teach")}</label><div id="teIns"></div>
+    <label class="field" style="margin-top:10px">${esc(window.t("social.hourly_rate"))}</label><input type="number" id="teFee" value="${t ? t.hourly : 30}" min="5">
+    <label class="field" style="margin-top:10px">${esc(window.t("social.presentation"))}</label><textarea id="teBio" placeholder="${esc(window.t("social.presentation_placeholder"))}">${t ? esc(t.bio) : ""}</textarea>
+    <label class="field" style="margin-top:10px;display:flex;align-items:center;gap:8px"><input type="checkbox" id="teOnline" ${t && t.online ? "checked" : ""}> ${esc(window.t("social.available_online"))}</label>
+    <div class="section-label">${esc(window.t("social.add_calendar_slot"))}</div>
     <div class="filter-row">
       <input type="date" id="teDate"><input type="time" id="teTime" value="18:00">
       <button class="btn small" id="teAddSlot">${ic('plus')}</button>
     </div>
     <div id="teSlots" style="margin-top:8px"></div>
-    <button class="btn" id="teSave" style="margin-top:16px">${t ? "Salva" : "Pubblica profilo insegnante"}</button>
+    <button class="btn" id="teSave" style="margin-top:16px">${t ? esc(window.t("social.save")) : esc(window.t("social.publish_teacher_profile"))}</button>
   `);
   const selI = t ? t.instruments.slice() : (state.me.instruments || []).slice();
   const slots = t ? (t.slots || []).map(s => Object.assign({}, s)) : [];
-  instrumentPicker($("#teIns"), selI, { placeholder: "Strumento che insegni…" });
+  instrumentPicker($("#teIns"), selI, { placeholder: window.t("social.instrument_you_teach_placeholder") });
   // "prenotato" derivato dalle bookings persistite verso il proprio profilo insegnante (id "me"), non da un flag seed.
   const meTeacher = { id: "me", slots };
   const paintSlots = () => {
     const box = $("#teSlots");
-    box.innerHTML = slots.length ? slots.map((s, i) => { const bk = isSlotBooked(meTeacher, s); return `<div class="lvl-row"><span class="lvl-inst">${ic('calendar')} ${formatDate(s.date)} · ${esc(s.time)}${bk ? " · prenotato" : ""}</span>${bk ? "" : `<button class="rep-del" data-i="${i}">${ic('x')}</button>`}</div>`; }).join("") : `<p class="view-sub">Nessuno slot. Aggiungine almeno uno.</p>`;
+    box.innerHTML = slots.length ? slots.map((s, i) => { const bk = isSlotBooked(meTeacher, s); return `<div class="lvl-row"><span class="lvl-inst">${ic('calendar')} ${formatDate(s.date)} · ${esc(s.time)}${bk ? " · " + esc(window.t("social.booked")) : ""}</span>${bk ? "" : `<button class="rep-del" data-i="${i}">${ic('x')}</button>`}</div>`; }).join("") : `<p class="view-sub">${esc(window.t("social.no_slots"))}</p>`;
     box.querySelectorAll("[data-i]").forEach(b => b.onclick = () => { slots.splice(+b.dataset.i, 1); paintSlots(); });
   };
   paintSlots();
-  $("#teAddSlot").onclick = () => { const d = $("#teDate").value, tm = $("#teTime").value; if (!d) return markFieldError("#teDate", "Scegli una data."); slots.push({ id: "ms" + Date.now() + Math.random().toString(36).slice(2, 5), date: d, time: tm || "18:00" }); paintSlots(); };
-  $("#teSave").onclick = () => {
-    if (!selI.length) return toast("Indica almeno uno strumento");
+  $("#teAddSlot").onclick = () => { const d = $("#teDate").value, tm = $("#teTime").value; if (!d) return markFieldError("#teDate", window.t("social.choose_a_date")); slots.push({ id: "ms" + Date.now() + Math.random().toString(36).slice(2, 5), date: d, time: tm || "18:00" }); paintSlots(); };
+  $("#teSave").onclick = async () => {
+    if (!selI.length) return toast(window.t("social.indicate_instrument"));
     state.teacher = { instruments: selI, hourly: +$("#teFee").value || 30, bio: $("#teBio").value.trim(), online: $("#teOnline").checked, slots };
-    save(); closeModal(); toast(t ? "Disponibilità salvate" : "Sei un insegnante su JamMate!", ic('graduation-cap')); rerenderLessons();
+    if (typeof isProductionRuntime === "function" && isProductionRuntime()) {
+      try {
+        await JM.Api.lessons.saveTeacher({
+          instruments: selI, hourlyCents: state.teacher.hourly * 100,
+          bio: state.teacher.bio, online: state.teacher.online, city: state.me.city
+        });
+        for (const slot of slots.filter((item) => String(item.id || "").startsWith("ms"))) {
+          const created = await JM.Api.lessons.addSlot({ startsAt: `${slot.date}T${slot.time}:00`, durationMin: 60 });
+          slot.id = created.id;
+        }
+      } catch (error) {
+        return toast(error.message || "Profilo insegnante non salvato", ic("alert-triangle"), { error: true });
+      }
+    }
+    save(); closeModal(); toast(t ? window.t("social.availability_saved") : window.t("social.you_are_teacher"), ic('graduation-cap')); rerenderLessons();
   };
 }
 

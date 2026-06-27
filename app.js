@@ -3,30 +3,60 @@
  * basta aprire index.html. I dati persistono nel browser (localStorage). */
 
 // ---------- Stato & persistenza ----------
-const STORE_KEY = "jammate_state_v2";
+const STORE_KEY = (window.JM && JM.Runtime && JM.Runtime.stateKey) || "jammate_demo_state_v2";
 // Distanza: step non lineari; l'ultimo = "Ovunque" (sentinella alta così
 // "p.distanceKm <= d" passa sempre). Default inclusivo (Ovunque), opt-in al restringimento.
 const DIST_STEPS = [5, 10, 25, 50, 100, 200, 99999];
 const DIST_MAX = 99999;
-function distLabel(d) { return d >= DIST_MAX ? "Ovunque" : d + " km"; }
+function isProductionRuntime() { return !!(window.JM && JM.Runtime && !JM.Runtime.demo); }
+function distLabel(d) { return d >= DIST_MAX ? t('app.dist_anywhere') : d + " km"; }
 function distIndex(d) { const i = DIST_STEPS.indexOf(d); if (i >= 0) return i; const j = DIST_STEPS.findIndex(s => s >= d); return j >= 0 ? j : DIST_STEPS.length - 1; }
 
 function loadState() {
+  if (window.JM && JM.InitialState) return applyRemoteState(migrate(structuredClone(JM.InitialState)));
   const raw = JM.Storage.get(STORE_KEY);
   if (raw) {
-    try { return migrate(JSON.parse(raw)); }
+    try { return applyRemoteState(migrate(JSON.parse(raw))); }
     catch (e) {
       try { JM.Storage.set(STORE_KEY + "_corrupt_backup", raw); } catch (_) {}
       console.warn("JamMate: stato salvato illeggibile — riparto dai dati demo (copia in " + STORE_KEY + "_corrupt_backup).", e);
     }
   }
-  return freshState();
+  return applyRemoteState(freshState());
+}
+function applyRemoteState(base) {
+  const r = window.JM && JM.RemoteData;
+  if (!r || (JM.Runtime && JM.Runtime.demo)) return base;
+  const own = r.me && r.me.profile;
+  if (r.session) {
+    base.me.id = r.session.id;
+    base.me.name = r.session.displayName || base.me.name;
+  }
+  if (own) {
+    Object.assign(base.me, own, { photo: own.photoUrl || own.photo || "", deep: r.me.deep || base.me.deep });
+    base.onboarded = true;
+  }
+  base.profiles = Array.isArray(r.profiles) ? r.profiles : [];
+  base.matches = Array.isArray(r.matches) ? r.matches.map((m) => m.userId) : [];
+  base.posts = Array.isArray(r.posts) ? r.posts : [];
+  base.jams = Array.isArray(r.jams) ? r.jams : [];
+  base.bands = Array.isArray(r.bands) ? r.bands : [];
+  base.publicBands = Array.isArray(r.publicBands) ? r.publicBands : [];
+  base.venues = Array.isArray(r.venues) ? r.venues : [];
+  base.bookings = Array.isArray(r.bookings) ? r.bookings : [];
+  base.teachers = Array.isArray(r.teachers) ? r.teachers : [];
+  base.lessonBookings = Array.isArray(r.lessonBookings) ? r.lessonBookings : [];
+  base.notifications = Array.isArray(r.notifications) ? r.notifications : [];
+  return base;
 }
 function freshState() {
+  const demo = !window.JM || !JM.Runtime || JM.Runtime.demo;
   return {
     // Clona i seed: lo stato deve possedere i propri oggetti, altrimenti pushMsg()/jamJoin()
     // muterebbero le costanti di modulo (mai serializzate) e "Azzera dati demo" non ripristinerebbe.
-    profiles: structuredClone(SEED_PROFILES), events: normalizeEvents(structuredClone(SEED_EVENTS)), messages: structuredClone(SEED_MESSAGES),
+    profiles: demo ? structuredClone(SEED_PROFILES) : [],
+    events: demo ? normalizeEvents(structuredClone(SEED_EVENTS)) : [],
+    messages: demo ? structuredClone(SEED_MESSAGES) : {},
     me: {
       id: "me", name: "", avatar: "🎵", color: GRADS[0], photo: "", city: "Milano", distanceKm: 0,
       instruments: [], levels: {}, level: "Intermedio", genres: [], bio: "", tagline: "",
@@ -41,15 +71,15 @@ function freshState() {
       caps: { plays: true, hires: false },
       verifyStatus: "none"   // 'none' | 'pending' | 'verified' — badge di fiducia (verifica reale col backend)
     },
-    liked: [], passed: [], matches: ["u2"],
+    liked: [], passed: [], matches: demo ? ["u2"] : [],
     jamsDone: {}, jamFeedback: {}, savedAds: [], boardSeen: 0, tools: {}, teacherStats: {},
     bands: [], myVenue: null, bookings: [], metroPresets: [],
     posts: [], jams: [], teacher: null, lessonBookings: [], contacts: [],
-    notifications: [
+    notifications: demo ? [
       { id: "seed1", icon: "🎤", text: "Giulia Ferri ha visto il tuo profilo.", ts: Date.now() - 2 * 3600e3, read: false, view: "discover" },
       { id: "seed2", icon: "map", text: "Nuova jam vicino a te: “Jam jazz al parco”.", ts: Date.now() - 5 * 3600e3, read: false, view: "board" },
       { id: "seed3", icon: "👋", text: "Benvenuto! Completa il Profilo Accordato per sbloccare la Sintonia.", ts: Date.now() - 26 * 3600e3, read: false, view: "profile" }
-    ],
+    ] : [],
     filters: { instrument: "", level: "", genre: "", distance: DIST_MAX },
     ui: { discoverMode: "match", palcoMode: "band", boardMode: "list", unread: false, notifSeen: true },
     // Registro consensi GDPR (versionato + timestamp): backend-ready. `deep` = consenso ESPLICITO
@@ -107,17 +137,19 @@ function migrate(s) {
 }
 
 let state = loadState();
+if (window.JM && JM.Sync) JM.Sync.prime(state);
 // save() non deve MAI lanciare: una quota piena (foto/post in dataURL) abortirebbe l'handler
 // chiamante lasciando lo stato a metà. JM.Storage.set ripiega in memoria e ritorna false in caso di errore.
 let _quotaWarned = false;
 function save() {
   const durable = JM.Storage.set(STORE_KEY, JSON.stringify(state));
+  if (window.JM && JM.Sync) JM.Sync.schedule(state);
   // Scrittura non durevole (quota piena / storage bloccato): i dati restano in sessione ma non oltre
   // il reload. Avvisa UNA sola volta e non lanciare mai (l'handler chiamante non deve abortire).
   if (!durable && !_quotaWarned) {
     _quotaWarned = true;
     console.warn("JamMate: storage durevole non disponibile — uso la memoria volatile (dati non persistiti tra sessioni).");
-    if (typeof toast === "function") toast("Spazio esaurito — libera memoria: i dati non verranno salvati", ic('alert-triangle'), { error: true });
+    if (typeof toast === "function") toast(t('app.storage_full'), ic('alert-triangle'), { error: true });
   }
   return durable;
 }
@@ -141,8 +173,31 @@ const safeImg = (u) => { const s = String(u ?? "").trim(); return IMG_OK.test(s)
 // Sicurezza: nei background ammetti SOLO i gradienti della palette GRADS (niente CSS injection via color).
 const safeColor = (c) => (typeof GRADS !== "undefined" && GRADS.indexOf(c) !== -1) ? c : "var(--card-hi)";
 const hash = (s) => { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0; return h; };
+// ---------- Vocabolario controllato: SOLO display (valore canonico invariato) ----------
+// I valori canonici di data.js (INSTRUMENTS/LEVELS/GENRES/famiglie) restano la fonte
+// di verità: persistiti, confrontati nel codice e dal backend. Qui ne risolviamo solo
+// la LABEL localizzata via i18n.vocab.js, con fallback al valore canonico.
+// Schema slug/namespace (deve combaciare byte-per-byte con le chiavi di i18n.vocab.js):
+//   slug(v) = lower → NFD → drop diacritici → [^a-z0-9]+ → "_" → trim "_"
+//   strumenti  → "vocab." + slug        · famiglie → "vocab.fam_" + slug
+//   livelli    → "vocab.level_" + slug  · generi   → "vocab.genre_" + slug
+// I prefissi (fam_/level_/genre_) evitano collisioni tra categorie (es. famiglia "Voce"
+// vs strumento "Voce", o genere/strumento omonimi).
+function vocabSlug(v) {
+  return String(v).toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+}
+function vocabResolve(prefix, v) {
+  const k = "vocab." + prefix + vocabSlug(v);
+  const s = window.t(k);            // window.t: robusto anche se 't' è ombreggiato localmente
+  return s === k ? v : s;           // nessuna chiave ⇒ valore canonico
+}
+const vocabLabel = (v) => vocabResolve("", v);        // strumenti (slug nudo)
+const vocabFamily = (f) => vocabResolve("fam_", f);   // famiglie strumenti
+const levelLabel = (l) => vocabResolve("level_", l);  // livelli
+const genreLabel = (g) => vocabResolve("genre_", g);  // generi
 // Tag strumento + livello per-strumento (es. "Sax · Avanzato"). Vedi levelsOf() in data.js.
-const instrTags = (p) => { const m = levelsOf(p); return (p.instruments || []).map(i => `<span class="tag accent">${esc(i)}${m[i] ? ` · ${esc(m[i])}` : ""}</span>`).join(""); };
+const instrTags = (p) => { const m = levelsOf(p); return (p.instruments || []).map(i => `<span class="tag accent">${esc(vocabLabel(i))}${m[i] ? ` · ${esc(levelLabel(m[i]))}` : ""}</span>`).join(""); };
 
 let _toastEl = null;
 // toast(msg, icon, {error, actionLabel, onAction, duration}) — accessibile (role/aria-live) + azione opzionale (es. "Annulla").
@@ -165,14 +220,44 @@ function haptic(style) {
     if (navigator.vibrate) navigator.vibrate(style === "Heavy" ? [10, 30, 14] : style === "Medium" ? 14 : 8);
   } catch (_) {}
 }
-function options(list, selected, placeholder) {
+// value/data-*/selected restano CANONICI; solo il testo mostrato passa dal resolver `label`
+// (default vocabLabel = strumenti; per livelli/generi passa levelLabel/genreLabel). Per liste
+// non-vocab (regioni, province, tipi locale, tonalità) il resolver torna il valore inalterato.
+function options(list, selected, placeholder, label) {
+  label = label || vocabLabel;
   let o = placeholder ? `<option value="">${esc(placeholder)}</option>` : "";
-  return o + list.map(v => `<option value="${esc(v)}"${v === selected ? " selected" : ""}>${esc(v)}</option>`).join("");
+  return o + list.map(v => `<option value="${esc(v)}"${v === selected ? " selected" : ""}>${esc(label(v))}</option>`).join("");
 }
-function chips(list, selected) {
-  return list.map(v => `<span class="chip${selected.includes(v) ? " on" : ""}" data-chip="${esc(v)}" role="button" tabindex="0" aria-pressed="${selected.includes(v)}">${esc(v)}</span>`).join("");
+function chips(list, selected, label) {
+  label = label || vocabLabel;
+  return list.map(v => `<span class="chip${selected.includes(v) ? " on" : ""}" data-chip="${esc(v)}" role="button" tabindex="0" aria-pressed="${selected.includes(v)}">${esc(label(v))}</span>`).join("");
 }
 function toggleChip(node, arr) { const v = node.dataset.chip, i = arr.indexOf(v); if (i >= 0) arr.splice(i, 1); else arr.push(v); node.classList.toggle("on"); node.setAttribute("aria-pressed", node.classList.contains("on")); }
+// Menu core condiviso tra Profilo (prefix "hub") e Drawer (prefix "drw"): unica fonte di verità
+// per griglia hub + righe (Pagine/Pro/Verifica/Boost · Impostazioni/Aiuto/Segnala). Gli id restano
+// distinti per prefisso così le due viste possono coesistere nel DOM con handler propri.
+function hubGrid() {
+  return `<div class="hub-grid">
+          <button class="hub-item" data-go="palco"><span>${ic('microphone')}</span><small>${t('app.hub_palco')}</small></button>
+          <button class="hub-item" data-go="lessons"><span>${ic('graduation-cap')}</span><small>${t('app.hub_lessons')}</small></button>
+          <button class="hub-item" data-go="tools"><span>${ic('sliders')}</span><small>${t('app.hub_tools')}</small></button>
+        </div>`;
+}
+function menuRows(p) {
+  const m = state.me, chev = `<span class="hub-chev">${ic('chevron')}</span>`;
+  return `<div class="hub-list" style="margin-top:10px">
+          <button class="hub-row" id="${p}Pages"><span>${ic('building')} ${typeof pagesCount === "function" && pagesCount() ? t('app.hub_pages_one', { count: pagesCount() }) : t('app.hub_pages')}</span>${chev}</button>
+          <button class="hub-row" id="${p}Pro"><span>${ic('resonance-profile', 'grad')} ${m.plan === "pro" ? t('app.hub_pro_active') : t('app.hub_pro')}</span>${chev}</button>
+          <button class="hub-row" id="${p}Verify"><span>${ic('check')} ${m.verifyStatus === "verified" ? t('app.hub_verified') : (m.verifyStatus === "pending" ? t('app.hub_verify_pending') : t('app.hub_verify'))}</span>${chev}</button>
+          <button class="hub-row" id="${p}Boost"><span>${ic('sparkles')} ${t('app.hub_boost')}</span>${chev}</button>
+        </div>
+        <div class="section-label">${t('app.hub_account_support')}</div>
+        <div class="hub-list">
+          <button class="hub-row" id="${p}Settings"><span>${ic('gear')} ${t('app.hub_settings')}</span>${chev}</button>
+          <button class="hub-row" id="${p}Help"><span>${ic('info')} ${t('app.hub_help')}</span>${chev}</button>
+          <button class="hub-row" id="${p}Report"><span>${ic('flag')} ${t('app.hub_report')}</span>${chev}</button>
+        </div>`;
+}
 // a11y: i segmented sono a selezione SINGOLA (tab-like) → pattern radiogroup/radio + aria-checked,
 // non aria-pressed (che li farebbe annunciare come toggle indipendenti). I chip restano multi-select
 // (button + aria-pressed). Da chiamare dopo ogni render.
@@ -219,7 +304,7 @@ function instrumentPicker(mount, selected, opts) {
   mount.innerHTML = `
     <div class="ins-tags"></div>
     <div class="ins-input-wrap">
-      <input type="text" class="ins-input" role="combobox" aria-expanded="false" aria-autocomplete="list" placeholder="${esc(opts.placeholder || "Cerca o sfoglia uno strumento…")}" autocomplete="off">
+      <input type="text" class="ins-input" role="combobox" aria-expanded="false" aria-autocomplete="list" placeholder="${esc(opts.placeholder || t('app.ins_placeholder'))}" autocomplete="off">
       <div class="ins-suggest" role="listbox" hidden></div>
     </div>`;
   const tagsBox = mount.querySelector(".ins-tags");
@@ -232,7 +317,7 @@ function instrumentPicker(mount, selected, opts) {
   const hide = () => { sugg.hidden = true; input.setAttribute("aria-expanded", "false"); activeIdx = -1; };
   const setActive = (i) => { const r = rows(); r.forEach(x => x.classList.remove("active")); if (r[i]) { r[i].classList.add("active"); r[i].scrollIntoView({ block: "nearest" }); activeIdx = i; } };
   const paintTags = () => {
-    tagsBox.innerHTML = selected.map((i, idx) => `<span class="ins-tag">${esc(i)}<button type="button" data-rm="${idx}" aria-label="Rimuovi">${ic('x')}</button></span>`).join("");
+    tagsBox.innerHTML = selected.map((i, idx) => `<span class="ins-tag">${esc(vocabLabel(i))}<button type="button" data-rm="${idx}" aria-label="${esc(t('app.remove_action'))}">${ic('x')}</button></span>`).join("");
     tagsBox.querySelectorAll("[data-rm]").forEach(b => b.onclick = () => { selected.splice(+b.dataset.rm, 1); paintTags(); onChange(); });
   };
   const add = (name, isProposal) => {
@@ -244,29 +329,31 @@ function instrumentPicker(mount, selected, opts) {
     sugg.querySelectorAll("[data-add]").forEach(b => b.onclick = () => add(b.dataset.add));
     sugg.querySelectorAll("[data-propose]").forEach(b => b.onclick = () => add(b.dataset.propose, true));
   };
-  const opt = (i, q) => { const fam = grouped ? INSTRUMENT_FAMILY[i] : ""; return `<button type="button" role="option" class="ins-opt" data-add="${esc(i)}">${q ? hl(i, q) : esc(i)}${fam ? `<span class="ins-fam-tag">${esc(fam)}</span>` : ""}</button>`; };
+  // data-add resta CANONICO; in browse mostriamo la label localizzata, in ricerca evidenziamo
+  // il match sul valore canonico (è ciò che il filtro confronta con la query digitata).
+  const opt = (i, q) => { const fam = grouped ? INSTRUMENT_FAMILY[i] : ""; return `<button type="button" role="option" class="ins-opt" data-add="${esc(i)}">${q ? hl(i, q) : esc(vocabLabel(i))}${fam ? `<span class="ins-fam-tag">${esc(vocabFamily(fam))}</span>` : ""}</button>`; };
   const browse = () => {
-    const t = takenSet();
-    const rec = recentInstruments().filter(i => list.includes(i) && !t.has(i.toLowerCase())).slice(0, 6);
-    const pop = POPULAR_INSTRUMENTS.filter(i => list.includes(i) && !t.has(i.toLowerCase()) && !rec.includes(i)).slice(0, 8);
+    const taken = takenSet();
+    const rec = recentInstruments().filter(i => list.includes(i) && !taken.has(i.toLowerCase())).slice(0, 6);
+    const pop = POPULAR_INSTRUMENTS.filter(i => list.includes(i) && !taken.has(i.toLowerCase()) && !rec.includes(i)).slice(0, 8);
     let html = "";
-    if (rec.length) html += `<div class="ins-sect">Usati di recente</div>` + rec.map(i => opt(i)).join("");
-    if (pop.length) html += `<div class="ins-sect">Popolari</div>` + pop.map(i => opt(i)).join("");
-    if (grouped) html += INSTRUMENT_GROUPS.map(g => { const items = g.items.filter(i => !t.has(i.toLowerCase())); return items.length ? `<details class="ins-fam"><summary>${esc(g.family)} <span>${items.length}</span></summary>${items.map(i => opt(i)).join("")}</details>` : ""; }).join("");
-    sugg.innerHTML = html || `<div class="ins-empty">Inizia a digitare…</div>`;
+    if (rec.length) html += `<div class="ins-sect">${t('app.ins_recent')}</div>` + rec.map(i => opt(i)).join("");
+    if (pop.length) html += `<div class="ins-sect">${t('app.ins_popular')}</div>` + pop.map(i => opt(i)).join("");
+    if (grouped) html += INSTRUMENT_GROUPS.map(g => { const items = g.items.filter(i => !taken.has(i.toLowerCase())); return items.length ? `<details class="ins-fam"><summary>${esc(vocabFamily(g.family))} <span>${items.length}</span></summary>${items.map(i => opt(i)).join("")}</details>` : ""; }).join("");
+    sugg.innerHTML = html || `<div class="ins-empty">${t('app.ins_start_typing')}</div>`;
     bind(); sugg.hidden = false; input.setAttribute("aria-expanded", "true"); activeIdx = -1;
   };
   const search = () => {
     const q = input.value.trim().toLowerCase(); if (!q) return browse();
-    const t = takenSet();
-    const hits = list.filter(i => i.toLowerCase().includes(q) && !t.has(i.toLowerCase())).slice(0, 8);
+    const taken = takenSet();
+    const hits = list.filter(i => i.toLowerCase().includes(q) && !taken.has(i.toLowerCase())).slice(0, 8);
     const exact = list.some(i => i.toLowerCase() === q);
     const syn = (typeof INSTRUMENT_SYNONYMS !== "undefined") ? INSTRUMENT_SYNONYMS[q] : null;
     let html = "";
-    if (syn && !hits.includes(syn) && !t.has(syn.toLowerCase())) html += `<button type="button" role="option" class="ins-opt ins-syn" data-add="${esc(syn)}">Intendevi <b>${esc(syn)}</b>?</button>`;
+    if (syn && !hits.includes(syn) && !taken.has(syn.toLowerCase())) html += `<button type="button" role="option" class="ins-opt ins-syn" data-add="${esc(syn)}">${t('app.ins_did_you_mean', { name: esc(vocabLabel(syn)) })}</button>`;
     html += hits.map(i => opt(i, q)).join("");
-    if (!exact && input.value.trim().length >= 2) html += `<button type="button" role="option" class="ins-opt ins-other" data-propose="${esc(input.value.trim())}">${ic('plus')} Proponi «${esc(input.value.trim())}» <span class="ins-fam-tag">in revisione</span></button>`;
-    sugg.innerHTML = html || `<div class="ins-empty">Nessun risultato — premi Invio per proporlo</div>`;
+    if (!exact && input.value.trim().length >= 2) html += `<button type="button" role="option" class="ins-opt ins-other" data-propose="${esc(input.value.trim())}">${ic('plus')} ${t('app.ins_propose', { name: esc(input.value.trim()) })} <span class="ins-fam-tag">${t('app.ins_in_review')}</span></button>`;
+    sugg.innerHTML = html || `<div class="ins-empty">${t('app.ins_no_results')}</div>`;
     bind(); sugg.hidden = false; input.setAttribute("aria-expanded", "true"); activeIdx = -1;
   };
   sugg.addEventListener("mousedown", e => e.preventDefault()); // tiene il focus sull'input (accordion/click non chiudono)
@@ -308,12 +395,12 @@ function avgScore(e) { return Math.round((e.puntualita + e.tecnica + e.attitudin
 // Badge "jam suonate": gamification leggera sui traguardi (#7).
 function jamBadge(n) {
   n = n || 0;
-  if (n >= 50) return { icon: ic('sparkles'), tier: "Leggenda del palco" };
-  if (n >= 25) return { icon: ic('star'), tier: "Veterano" };
-  if (n >= 10) return { icon: ic('star'), tier: "Habitué" };
-  if (n >= 5)  return { icon: ic('thumbs-up'), tier: "In rampa di lancio" };
-  if (n >= 1)  return { icon: ic('music-note'), tier: "Esordiente dal vivo" };
-  return { icon: ic('sparkles'), tier: "Pronto a partire" };
+  if (n >= 50) return { icon: ic('sparkles'), tier: t('app.badge_legend') };
+  if (n >= 25) return { icon: ic('star'), tier: t('app.badge_veteran') };
+  if (n >= 10) return { icon: ic('star'), tier: t('app.badge_regular') };
+  if (n >= 5)  return { icon: ic('thumbs-up'), tier: t('app.badge_launching') };
+  if (n >= 1)  return { icon: ic('music-note'), tier: t('app.badge_rookie') };
+  return { icon: ic('sparkles'), tier: t('app.badge_ready') };
 }
 
 // ---------- Standing di partecipazione (percentile circoscritto per città) ----------
@@ -345,13 +432,13 @@ function cityStanding(p) {
   const better = pool.filter(x => participationScore(x) > myScore).length; // quanti sopra di me
   const topPct = Math.round((better / pool.length) * 100);  // sono nel "top topPct%"
   let tier;
-  if (topPct <= 5) tier = "Tra i più attivi";
-  else if (topPct <= 20) tier = "Molto attivo";
-  else if (topPct <= 45) tier = "Attivo";
+  if (topPct <= 5) tier = t('app.standing_top');
+  else if (topPct <= 20) tier = t('app.standing_very');
+  else if (topPct <= 45) tier = t('app.standing_active');
   else return null;                                          // sotto la metà: nessuna posizione (mai shaming)
   return { tier, topPct, pool: pool.length, city: p.city };
 }
-function statusPill(s) { return `<span class="status-pill${s.topPct <= 5 ? " top" : ""}" title="Calcolato tra ${s.pool} musicisti a ${esc(s.city)}">${esc(s.tier)} a ${esc(s.city)}</span>`; }
+function statusPill(s) { return `<span class="status-pill${s.topPct <= 5 ? " top" : ""}" title="${esc(t('app.standing_calc', { pool: s.pool, city: s.city }))}">${esc(t('app.standing_pill', { tier: s.tier, city: s.city }))}</span>`; }
 function standingFlair(p, center) {
   if (p === state.me && state.settings && state.settings.hideStatus) return "";
   const s = cityStanding(p);
@@ -362,19 +449,20 @@ function standingFlair(p, center) {
 // Riassunto ruolo (capacità) per la chip glanceable nel profilo.
 function roleSummary(m) {
   const c = (m && m.caps) || {}; const r = [];
-  if (c.plays) r.push("Musicista"); if (c.hires) r.push("Organizzi");
-  return r.length ? r.join(" · ") : "Ascoltatore";
+  if (c.plays) r.push(t('app.role_musician')); if (c.hires) r.push(t('app.role_organizer'));
+  return r.length ? r.join(" · ") : t('app.role_listener');
 }
 function activitySummary(m) {
   const e = m.endo || {};
   const s = (state.settings && state.settings.hideStatus) ? null : cityStanding(m);
   const parts = [];
-  if (m.jamCount) parts.push(`${m.jamCount} jam`);
-  if (e.endorsements) parts.push(`${e.endorsements} endorsement`);
-  if ((m.repertoire || []).length) parts.push(`${m.repertoire.length} brani`);
-  parts.push(`${(m.instruments || []).length} strument${(m.instruments || []).length === 1 ? "o" : "i"}`);
+  if (m.jamCount) parts.push(t('app.activity_jam', { count: m.jamCount }));
+  if (e.endorsements) parts.push(t('app.activity_endorsement', { count: e.endorsements }));
+  if ((m.repertoire || []).length) parts.push(t('app.activity_songs', { count: m.repertoire.length }));
+  const insCount = (m.instruments || []).length;
+  parts.push(t(insCount === 1 ? 'app.activity_instruments_one' : 'app.activity_instruments_other', { count: insCount }));
   return `${s ? `<div class="rank-line rl-center">${statusPill(s)}</div>` : ""}
-    <div class="view-sub" style="font-size:.8rem">La tua attività: ${esc(parts.join(" · "))}</div>`;
+    <div class="view-sub" style="font-size:.8rem">${esc(t('app.your_activity', { parts: parts.join(" · ") }))}</div>`;
 }
 
 // Avatar: foto se presente, altrimenti emoji su gradiente "mesh"
@@ -398,11 +486,11 @@ function pickPhoto() {
         const ctx = c.getContext("2d"), r = Math.max(s / img.width, s / img.height);
         const w = img.width * r, h = img.height * r;
         ctx.drawImage(img, (s - w) / 2, (s - h) / 2, w, h);
-        try { state.me.photo = c.toDataURL("image/jpeg", 0.82); if (save()) toast("Foto aggiornata", ic('camera')); navigate("profile"); }
-        catch (e) { console.warn("JamMate: foto non elaborabile", e); toast("Immagine non valida", ic('alert-triangle'), { error: true }); }
+        try { state.me.photo = c.toDataURL("image/jpeg", 0.82); if (save()) toast(t('app.photo_updated'), ic('camera')); navigate("profile"); }
+        catch (e) { console.warn("JamMate: foto non elaborabile", e); toast(t('app.invalid_image'), ic('alert-triangle'), { error: true }); }
         inp.remove();
       };
-      img.onerror = () => { toast("Immagine non valida"); inp.remove(); };
+      img.onerror = () => { toast(t('app.invalid_image')); inp.remove(); };
       img.src = rd.result;
     };
     rd.readAsDataURL(f);
@@ -410,7 +498,7 @@ function pickPhoto() {
   inp.click();
 }
 function endoBlock(e) {
-  return `<div class="endo">${[["Puntualità", e.puntualita], ["Tecnica", e.tecnica], ["Attitudine", e.attitudine]].map(([l, n]) => `
+  return `<div class="endo">${[[t('app.endo_punctuality'), e.puntualita], [t('app.endo_technique'), e.tecnica], [t('app.endo_attitude'), e.attitudine]].map(([l, n]) => `
     <span class="lbl">${l}</span><span class="num">${n}%</span>
     <div class="bar" style="grid-column:1/-1"><i style="width:${n}%"></i></div>`).join("")}</div>`;
 }
@@ -459,13 +547,13 @@ function baseScore(p) {
 }
 // UN'UNICA metrica: il numero MOSTRATO = quello che ordina il mazzo e governa la probabilità di match.
 function affinityPct(p) { const a = getAffinity(p); return a.mode === "sintonia" ? a.res.score : a.score; }
-function affLabel(aff) { return aff.mode === "sintonia" ? `${ic("resonance-profile")} Sintonia ${aff.res.score}%` : `${ic("resonance-profile")} ${aff.score}% affinità`; }
+function affLabel(aff) { return aff.mode === "sintonia" ? `${ic("resonance-profile")} ${t('app.aff_sintonia', { pct: aff.res.score })}` : `${ic("resonance-profile")} ${t('app.aff_affinity', { pct: aff.score })}`; }
 // Riga "perché vi trovate" con icona bespoke (testo sanificato con esc(), icona fuori da esc()).
 function commonMeta(p) {
   const g = sharedGenres(p), so = sharedSongs(p);
-  if (so.length) return { icon: "music-note", text: `${so.length} ${so.length > 1 ? "brani" : "brano"} in comune: ${so.map(x => x.title).join(", ")}` };
-  if (g.length) return { icon: "target", text: `Generi in comune: ${g.join(", ")}` };
-  return { icon: "map-pin", text: `A ${p.distanceKm} km da te` };
+  if (so.length) return { icon: "music-note", text: t(so.length > 1 ? 'app.songs_in_common_other' : 'app.songs_in_common_one', { count: so.length, songs: so.map(x => x.title).join(", ") }) };
+  if (g.length) return { icon: "target", text: t('app.genres_in_common', { genres: g.join(", ") }) };
+  return { icon: "map-pin", text: t('app.km_from_you', { km: p.distanceKm }) };
 }
 function affCommonHtml(aff, p) {
   if (aff.mode === "sintonia") return `${ic("resonance-profile")} ${esc(aff.res.parts[0].text)}`;
@@ -474,14 +562,14 @@ function affCommonHtml(aff, p) {
 // Segnali "di scena" su un profilo: aggancio reale a jam/feed/bacheca (riusa gli helper esistenti).
 function sceneSignals(p) {
   const out = [];
-  if (typeof hasJammedWith === "function" && hasJammedWith(p)) out.push({ icon: "match", text: "Avete già jammato" });
+  if (typeof hasJammedWith === "function" && hasJammedWith(p)) out.push({ icon: "match", text: t('app.already_jammed') });
   const today = (typeof todayISO === "function") ? todayISO() : "";
   const jam = (typeof allJams === "function") ? allJams().find(j => j.hostId === p.id && j.date >= today) : null;
-  if (jam) out.push({ icon: "microphone", text: "Ospita una jam · " + formatDate(jam.date) });
+  if (jam) out.push({ icon: "microphone", text: t('app.hosts_a_jam', { date: formatDate(jam.date) }) });
   const feed = (typeof SEED_POSTS !== "undefined") && [...(state.posts || []), ...SEED_POSTS].some(po => po.authorId === p.id);
-  if (feed) out.push({ icon: "chat-bubble", text: "Attivo nel Feed" });
+  if (feed) out.push({ icon: "chat-bubble", text: t('app.active_in_feed') });
   const ad = (state.events || []).some(e => e.author === p.name);
-  if (ad) out.push({ icon: "megaphone", text: "Ha un annuncio in Bacheca" });
+  if (ad) out.push({ icon: "megaphone", text: t('app.has_board_ad') });
   return out.slice(0, 3);
 }
 function sceneSignalsHtml(p) {
@@ -492,12 +580,12 @@ function sceneSignalsHtml(p) {
 // Generi in comune fra due liste.
 function genreOverlap(a, b) { return (a || []).filter(x => (b || []).includes(x)).length; }
 // Chip "In risonanza" (lessico unico, identico al Feed).
-function risonanzaChip(label) { return `<span class="in-ris">${ic('match')} ${esc(label || "In risonanza")}</span>`; }
+function risonanzaChip(label) { return `<span class="in-ris">${ic('match')} ${esc(label || t('app.in_resonance'))}</span>`; }
 // Componente stelle accessibile (sostituisce ic('star').repeat fragile). value e max sulla stessa scala.
 function starsRating(value, max) {
   max = max || 5; const v = Math.max(0, Math.min(max, Math.round(value || 0)));
   let h = ""; for (let i = 1; i <= max; i++) h += `<span class="rs-star${i <= v ? " on" : ""}">${ic('star')}</span>`;
-  return `<span class="rating-stars" role="img" aria-label="${v} su ${max}">${h}</span>`;
+  return `<span class="rating-stars" role="img" aria-label="${esc(t('app.rating_value', { v, max }))}">${h}</span>`;
 }
 // Conferma brandizzata (sostituisce confirm()/prompt nativi). opts: {yes,no,danger}.
 function openConfirm(title, message, opts, onYes) {
@@ -505,8 +593,8 @@ function openConfirm(title, message, opts, onYes) {
   openModal(`<h2 style="margin-top:0">${esc(title)}</h2>
     <p style="line-height:1.5;color:var(--muted);margin:6px 0 0">${esc(message)}</p>
     <div class="confirm-actions">
-      <button class="btn secondary" id="cfNo" type="button">${esc(opts.no || "Annulla")}</button>
-      <button class="btn${opts.danger ? " danger" : ""}" id="cfYes" type="button">${esc(opts.yes || "Conferma")}</button>
+      <button class="btn secondary" id="cfNo" type="button">${esc(opts.no || t('app.cancel'))}</button>
+      <button class="btn${opts.danger ? " danger" : ""}" id="cfYes" type="button">${esc(opts.yes || t('app.confirm'))}</button>
     </div>`);
   const no = $("#cfNo"), yes = $("#cfYes");
   if (no) no.onclick = () => closeModal();
@@ -538,40 +626,64 @@ function markFieldError(input, msg) {
   try { inp.focus(); inp.scrollIntoView({ block: "center", behavior: "smooth" }); } catch (_) {}
   return false;
 }
+// --- Sintonia: localizza i descrittori {k, ...params} prodotti da affinity.js (lingua-neutro).
+// I nomi-valore Schwartz e i livelli-obiettivo sono token canonici risolti qui via t(). ---
+const AFF_GOAL_LEVELS = ["hobby", "hobbyplus", "balance", "semipro", "profession"];
+function affValueName(key) {
+  const slug = String(key || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+  return t("affinity.value_" + slug);
+}
+function affT(d) {
+  if (!d || !d.k) return "";
+  switch (d.k) {
+    case "values_shared": return t("affinity.values_shared", { value: affValueName(d.value) });
+    case "goal_same": return t("affinity.goal_same", { level: t("affinity.goal_" + (AFF_GOAL_LEVELS[d.level] || "balance")) });
+    case "taste_songs": {
+      const base = t(d.count > 1 ? "affinity.taste_songs_other" : "affinity.taste_songs_one", { count: d.count, songs: d.songs });
+      return base + (d.keyShared ? t("affinity.taste_key", { n: d.keyShared }) : "");
+    }
+    case "taste_genres": return t("affinity.taste_genres", { genres: d.genres });
+    case "insight_valore": return t("affinity.insight_valore", { value: affValueName(d.value) });
+    case "insight_ruolo": return t("affinity.insight_ruolo", { leader: d.who === "you" ? t("affinity.role_you") : t("affinity.role_other", { name: d.name }) });
+    case "insight_brano": return t("affinity.insight_brano", { song: d.song });
+    case "insight_genere": return t("affinity.insight_genere", { genres: d.genres });
+    default: return t("affinity." + d.k); // descrittori senza parametri (compatible/different/few/warn_*/…)
+  }
+}
 function affHeaderHtml(aff) {
   return aff.mode === "sintonia"
-    ? `<div class="aff-reveal"><div class="aff-score" style="margin-top:6px">Sintonia ${aff.res.score}%</div>
+    ? `<div class="aff-reveal"><div class="aff-score" style="margin-top:6px">${t('app.aff_sintonia', { pct: aff.res.score })}</div>
        <svg class="aff-wave" viewBox="0 0 140 30" aria-hidden="true"><path pathLength="240" d="M3 15 C 12 3, 23 3, 33 15 S 54 27, 64 15 S 85 3, 95 15 S 116 27, 126 15 S 134 11, 138 15"/></svg></div>`
-    : `<div style="margin-top:6px;font-weight:800;color:var(--accent);display:inline-flex;align-items:center;gap:5px">${ic("resonance-profile")} ${aff.score}% affinità di base</div>`;
+    : `<div style="margin-top:6px;font-weight:800;color:var(--accent);display:inline-flex;align-items:center;gap:5px">${ic("resonance-profile")} ${t("affinity.base_affinity", { pct: aff.score })}</div>`;
 }
 function affDetailHtml(aff) {
   if (aff.mode !== "sintonia")
-    return `<div class="aff-note">${ic("resonance-profile")} Completa il <b>Profilo Accordato</b> (scheda Profilo) per vedere la <b>Sintonia</b> con la spiegazione, basata su valori, obiettivi, affidabilità e gusti condivisi.</div>`;
+    return `<div class="aff-note">${ic("resonance-profile")} ${t("affinity.no_profile")}</div>`;
   const r = aff.res;
   const insight = r.insight ? `<div class="insight"><span class="insight-emoji">${ic('sparkles')}</span><div style="flex:1">
-      <b>L'insight di JamMate</b><br>${esc(r.insight.text)}
-      <div class="resonate">Ti risuona? <button data-resonate="1">${ic("thumbs-up")} Sì</button><button data-resonate="0">${ic("face-neutral")} No</button></div>
+      <b>${t("affinity.insight_title")}</b><br>${esc(affT(r.insight))}
+      <div class="resonate">${t("affinity.resonate_q")} <button data-resonate="1">${ic("thumbs-up")} ${t("affinity.yes")}</button><button data-resonate="0">${ic("face-neutral")} ${t("affinity.no")}</button></div>
     </div></div>` : "";
   const bars = r.parts.slice(0, 5).map(p => `
-    <span class="lbl">${esc(p.label)}</span><span class="num">${p.pct}%</span>
+    <span class="lbl">${esc(t("affinity.part_" + p.key))}</span><span class="num">${p.pct}%</span>
     <div class="bar" style="grid-column:1/-1"><i style="width:${p.pct}%"></i></div>`).join("");
-  const reasons = r.parts.slice(0, 3).map(p => `• ${esc(p.text)}`).join("<br>");
-  const warn = r.warn.map(w => `<div class="warn-chip">${ic('alert-triangle')} ${esc(w)}</div>`).join("");
+  const reasons = r.parts.slice(0, 3).map(p => `• ${esc(affT(p.t))}`).join("<br>");
+  const warn = r.warn.map(w => `<div class="warn-chip">${ic('alert-triangle')} ${esc(affT(w))}</div>`).join("");
   return `${insight}
-    <div class="section-label">Perché vi trovate · profilo ${esc(r.depth)}</div>
+    <div class="section-label">${t("affinity.why_match", { depth: t("affinity.depth_" + r.depth) })}</div>
     <div class="endo">${bars}</div>
     <div class="aff-note">${reasons}</div>
     ${warn}
-    <div class="aff-note">La Sintonia si basa su valori e gusti condivisi: un ottimo punto di partenza, <b>non una garanzia</b>. La vera intesa nasce suonando insieme. 🎶</div>`;
+    <div class="aff-note">${t("affinity.disclaimer")}</div>`;
 }
 function jmResonate(v, btn) {
   const box = btn.parentElement;
-  box.innerHTML = v ? "Grazie! 🙌 Questo aiuta a migliorare la Sintonia." : "Annotato — niente è una scienza esatta 😉";
+  box.innerHTML = v ? t("affinity.resonate_yes") : t("affinity.resonate_no");
 }
 
 // ---------- Router ----------
 let currentView = "discover";
-const VIEW_NAMES = { discover: "Scopri", feed: "Feed", board: "Bacheca", palco: "Palco", profile: "Profilo", lessons: "Lezioni", tools: "Strumenti", messages: "Chat" };
+const VIEW_NAMES = { discover: t('app.view_discover'), feed: "Feed", board: t('app.view_board'), palco: t('app.view_palco'), profile: t('app.view_profile'), lessons: t('app.view_lessons'), tools: t('app.view_tools'), messages: t('app.view_chat') };
 const VIEW_PARENT = { palco: "profile", lessons: "profile", tools: "profile" }; // viste-hub → tab "genitore"
 let viewScroll = {}; // scroll memorizzato per vista (ripristino al ritorno)
 // --- Integrazione history/back-button (browser + gesto Android): vedi initBackButton() in fondo ---
@@ -621,13 +733,13 @@ function updateChatDot() {
   const n = (typeof totalUnread === "function") ? totalUnread() : 0;
   const d = $("#chatDot"); if (d) { d.hidden = n === 0; d.setAttribute("aria-hidden", "true"); }
   const tab = document.querySelector('.tab[data-view="messages"]');
-  if (tab) tab.setAttribute("aria-label", n > 0 ? `Chat, ${n} non lett${n === 1 ? "o" : "i"}` : "Chat");
+  if (tab) tab.setAttribute("aria-label", n > 0 ? t(n === 1 ? 'app.chat_unread_one' : 'app.chat_unread_other', { count: n }) : t('app.chat_label'));
 }
 function updateBell() {
   const d = $("#bellDot"); if (!d) return;
   const unread = (state.notifications || []).filter(n => !n.read).length;
   d.hidden = unread === 0; d.dataset.count = unread > 9 ? "9+" : String(unread); d.setAttribute("aria-hidden", "true");
-  const b = $("#bellBtn"); if (b) b.setAttribute("aria-label", unread > 0 ? `Notifiche, ${unread} non lett${unread === 1 ? "a" : "e"}` : "Notifiche");
+  const b = $("#bellBtn"); if (b) b.setAttribute("aria-label", unread > 0 ? t(unread === 1 ? 'app.notif_unread_one' : 'app.notif_unread_other', { count: unread }) : t('app.notifications'));
 }
 
 // ---------- Onboarding ----------
@@ -647,39 +759,39 @@ function renderOnboarding(app) {
     <div>
       <div class="ob-hero">
         <svg class="ob-mark" viewBox="4 4 56 56" width="76" height="76" aria-hidden="true"><defs><linearGradient id="obLogoGrad" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#8b6cff"/><stop offset="1" stop-color="#ff5c9d"/></linearGradient></defs><rect x="8" y="9" width="48" height="34" rx="14" fill="url(#obLogoGrad)"/><rect x="35.4" y="42" width="5.2" height="13" rx="2.6" fill="url(#obLogoGrad)"/><g fill="#0e0f1a"><rect x="16" y="29" width="4" height="7" rx="2"/><rect x="23" y="25" width="4" height="11" rx="2"/><rect x="30" y="20" width="4" height="16" rx="2"/><rect x="36" y="14" width="4" height="29" rx="2"/><rect x="44" y="23" width="4" height="13" rx="2"/></g></svg>
-        <h1 class="ob-title">Benvenuto su <span class="ob-grad">JamMate</span></h1>
-        <p class="view-sub">Trova musicisti vicino a te e suona insieme dal vivo. Crea il tuo profilo in 30 secondi.</p>
+        <h1 class="ob-title">${t('app.ob_welcome')}</h1>
+        <p class="view-sub">${t('app.ob_intro')}</p>
       </div>
       <div class="ob-steps">
-        <div class="ob-step">${spot('trova')}<small>Trova chi suona</small></div>
-        <div class="ob-step">${spot('sintonia')}<small>Scopri la Sintonia</small></div>
-        <div class="ob-step">${spot('suonate')}<small>Suonate dal vivo</small></div>
+        <div class="ob-step">${spot('trova')}<small>${t('app.ob_step_find')}</small></div>
+        <div class="ob-step">${spot('sintonia')}<small>${t('app.ob_step_sintonia')}</small></div>
+        <div class="ob-step">${spot('suonate')}<small>${t('app.ob_step_play')}</small></div>
       </div>
       <div class="card flat">
         <div class="ob-progress">
-          <div class="ob-progress-head"><b>Il tuo profilo</b><span id="obProgPct">0%</span></div>
-          <div class="ob-progress-bar" role="progressbar" aria-label="Completamento profilo" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="obProgBar"><i id="obProgFill"></i></div>
+          <div class="ob-progress-head"><b>${t('app.ob_your_profile')}</b><span id="obProgPct">0%</span></div>
+          <div class="ob-progress-bar" role="progressbar" aria-label="${esc(t('app.ob_profile_completion'))}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="obProgBar"><i id="obProgFill"></i></div>
         </div>
-        <label class="field" for="obName">Come ti chiami (o nome d'arte)</label>
-        <input type="text" id="obName" placeholder="Es. Marco / DJ Sonic" value="${esc(draft.name || "")}" aria-describedby="obNameErr" />
+        <label class="field" for="obName">${t('app.ob_name_label')}</label>
+        <input type="text" id="obName" placeholder="${esc(t('app.ob_name_ph'))}" value="${esc(draft.name || "")}" aria-describedby="obNameErr" />
         <div class="field-err" id="obNameErr" role="alert" hidden></div>
-        <label class="field" style="margin-top:12px" for="obCity">La tua città</label>
-        <input type="text" id="obCity" value="${esc(draft.city || "Milano")}" placeholder="Es. Milano" />
-        <label class="field" style="margin-top:12px">Cosa vuoi fare su JamMate?</label>
+        <label class="field" style="margin-top:12px" for="obCity">${t('app.ob_city_label')}</label>
+        <input type="text" id="obCity" value="${esc(draft.city || "Milano")}" placeholder="${esc(t('app.ob_city_ph'))}" />
+        <label class="field" style="margin-top:12px">${t('app.ob_what_to_do')}</label>
         <div class="chips" id="obCaps">
-          <span class="chip${caps.plays ? " on" : ""}" data-cap="plays" role="button" tabindex="0" aria-pressed="${caps.plays}">🎸 Suono</span>
-          <span class="chip${caps.hires ? " on" : ""}" data-cap="hires" role="button" tabindex="0" aria-pressed="${caps.hires}">🎤 Ingaggio / organizzo</span>
+          <span class="chip${caps.plays ? " on" : ""}" data-cap="plays" role="button" tabindex="0" aria-pressed="${caps.plays}">${t('app.ob_cap_plays')}</span>
+          <span class="chip${caps.hires ? " on" : ""}" data-cap="hires" role="button" tabindex="0" aria-pressed="${caps.hires}">${t('app.ob_cap_hires')}</span>
         </div>
-        <p class="view-sub" style="font-size:.78rem;margin:4px 0 0">Non suoni e non organizzi? Va benissimo: resti <b>ascoltatore</b> e scopri serate e artisti. Potrai cambiare in qualsiasi momento dal profilo.</p>
+        <p class="view-sub" style="font-size:.78rem;margin:4px 0 0">${t('app.ob_listener_note')}</p>
         <div id="obMusicianFields"${caps.plays ? "" : " hidden"}>
-          <label class="field" style="margin-top:12px">Strumenti che suoni</label>
+          <label class="field" style="margin-top:12px">${t('app.ob_instruments_label')}</label>
           <div id="obInstruments"></div>
-          <label class="field" style="margin-top:12px">Livello per strumento</label>
-          <div id="obLevels"><p class="view-sub">Seleziona uno strumento qui sopra per impostarne il livello.</p></div>
-          <label class="field" style="margin-top:12px">Generi preferiti</label>
-          <div class="chips" id="obGenres">${chips(GENRES, selGen)}</div>
+          <label class="field" style="margin-top:12px">${t('app.ob_level_label')}</label>
+          <div id="obLevels"><p class="view-sub">${t('app.ob_pick_instrument_hint')}</p></div>
+          <label class="field" style="margin-top:12px">${t('app.ob_genres_label')}</label>
+          <div class="chips" id="obGenres">${chips(GENRES, selGen, genreLabel)}</div>
         </div>
-        <button class="btn" id="obDone" style="margin-top:18px">Crea il mio profilo →</button>
+        <button class="btn" id="obDone" style="margin-top:18px">${t('app.ob_create_profile')}</button>
       </div>
     </div>`));
   // Avanzamento: nome + almeno uno strumento + almeno un genere (pesi che sommano a 100).
@@ -709,11 +821,11 @@ function renderOnboarding(app) {
   // Una riga "strumento → livello" per ogni strumento scelto (default Intermedio).
   const paintObLevels = () => {
     const box = $("#obLevels");
-    if (!selIns.length) { box.innerHTML = `<p class="view-sub">Seleziona uno strumento qui sopra per impostarne il livello.</p>`; return; }
+    if (!selIns.length) { box.innerHTML = `<p class="view-sub">${t('app.ob_pick_instrument_hint')}</p>`; return; }
     box.innerHTML = "";
     selIns.forEach(inst => {
       if (!selLevels[inst]) selLevels[inst] = LEVELS[2];
-      const row = el(`<div class="lvl-row"><span class="lvl-inst">${esc(inst)}</span><select>${options(LEVELS, selLevels[inst])}</select></div>`);
+      const row = el(`<div class="lvl-row"><span class="lvl-inst">${esc(vocabLabel(inst))}</span><select>${options(LEVELS, selLevels[inst], null, levelLabel)}</select></div>`);
       row.querySelector("select").onchange = e => { selLevels[inst] = e.target.value; persist(); };
       box.appendChild(row);
     });
@@ -724,14 +836,14 @@ function renderOnboarding(app) {
   cityIn.addEventListener("input", persist);
   $("#obName").addEventListener("input", () => { clearNameError(); persist(); });
   // Strumenti: campo a ricerca con tag + "Altro" (al posto dei chip fissi). Pre-carica gli strumenti della bozza.
-  instrumentPicker($("#obInstruments"), selIns, { onChange: () => { paintObLevels(); persist(); }, placeholder: "Cerca uno strumento (es. Sax tenore)…" });
+  instrumentPicker($("#obInstruments"), selIns, { onChange: () => { paintObLevels(); persist(); }, placeholder: t('app.ob_search_instrument_ph') });
   paintObLevels();
   app.querySelectorAll("#obGenres .chip").forEach(c => c.onclick = () => { toggleChip(c, selGen); persist(); });
   updateProgress();
   $("#obDone").onclick = () => {
     const name = $("#obName").value.trim();
     if (!name) { // validazione inline (non solo toast): messaggio sotto al campo + focus
-      const e = $("#obNameErr"); e.innerHTML = `${ic('alert-triangle')} Inserisci almeno il nome per continuare.`; e.hidden = false;
+      const e = $("#obNameErr"); e.innerHTML = `${ic('alert-triangle')} ${t('app.ob_name_required')}`; e.hidden = false;
       const inp = $("#obName"); inp.classList.add("input-error");
       try { inp.focus(); inp.scrollIntoView({ block: "center", behavior: "smooth" }); } catch (_) {}
       return;
@@ -748,7 +860,7 @@ function renderOnboarding(app) {
     // Ha appena visto lo step "Cosa vuoi fare?" + il flusso: niente auto-guida (resta in Profilo › Aiuto).
     state.onboarded = true; state.guide.seen = true; state.guide.v = GUIDE_VERSION;
     save(); clearObDraft();
-    toast("Profilo creato! Arricchiscilo qui, poi vai su Scopri", ic('music-note'));
+    toast(t('app.ob_profile_created'), ic('music-note'));
     navigate("profile");
   };
 }
@@ -757,11 +869,11 @@ function renderOnboarding(app) {
 function renderDiscover(app) {
   app.appendChild(el(`
     <div>
-      <h1 class="view-title">Scopri musicisti</h1>
-      <p class="view-sub">Trova chi suona vicino a te e scopri quanto siete in sintonia.</p>
+      <h1 class="view-title">${t('app.disc_title')}</h1>
+      <p class="view-sub">${t('app.disc_sub')}</p>
       <div class="segmented">
-        <button data-mode="match" class="${state.ui.discoverMode === "match" ? "on" : ""}">${ic("match")} Match</button>
-        <button data-mode="search" class="${state.ui.discoverMode === "search" ? "on" : ""}">${ic('search')} Cerca con filtri</button>
+        <button data-mode="match" class="${state.ui.discoverMode === "match" ? "on" : ""}">${ic("match")} ${t('app.disc_match')}</button>
+        <button data-mode="search" class="${state.ui.discoverMode === "search" ? "on" : ""}">${ic('search')} ${t('app.disc_search_filters')}</button>
       </div>
       <div id="discBody"></div>
     </div>`));
@@ -776,14 +888,14 @@ function renderDiscover(app) {
 }
 function renderPlaysPrompt(box) {
   box.appendChild(el(`<div class="card" style="text-align:center;padding:24px">
-    <div class="name" style="justify-content:center">${ic('match')} Il Match è per chi suona</div>
-    <p class="view-sub">La Sintonia confronta il <b>tuo</b> profilo musicale con gli altri. Attiva “Suono” per fare match, oppure esplora i musicisti da <b>Cerca con filtri</b>.</p>
+    <div class="name" style="justify-content:center">${ic('match')} ${t('app.disc_match_is_for_players')}</div>
+    <p class="view-sub">${t('app.disc_match_explain')}</p>
     <div class="disc-empty-actions">
-      <button class="btn small" id="ppPlays" type="button">${ic('music-note')} Attiva “Suono”</button>
-      <button class="btn small secondary" id="ppSearch" type="button">${ic('search')} Cerca con filtri</button>
+      <button class="btn small" id="ppPlays" type="button">${ic('music-note')} ${t('app.disc_enable_play')}</button>
+      <button class="btn small secondary" id="ppSearch" type="button">${ic('search')} ${t('app.disc_search_filters')}</button>
     </div>
   </div>`));
-  if ($("#ppPlays")) $("#ppPlays").onclick = () => { state.me.caps.plays = true; save(); renderDiscover2(); toast("Profilo musicista attivo", ic('check', 'ok')); };
+  if ($("#ppPlays")) $("#ppPlays").onclick = () => { state.me.caps.plays = true; save(); renderDiscover2(); toast(t('app.disc_musician_active'), ic('check', 'ok')); };
   if ($("#ppSearch")) $("#ppSearch").onclick = () => { state.ui.discoverMode = "search"; save(); renderDiscover2(); };
 }
 
@@ -824,14 +936,14 @@ function renderSwipe(box) {
     const activeFilters = [f.instrument, f.level, f.genre].filter(Boolean).length + (f.distance < DIST_MAX ? 1 : 0);
     const pendingLikes = (state.liked || []).filter(id => !state.matches.includes(id) && !state.passed.includes(id));
     const adCount = (state.events || []).filter(e => typeof evMatchesMe === "function" && evMatchesMe(e) && (typeof evIsExpired !== "function" || !evIsExpired(e))).length;
-    box.appendChild(el(`<div class="empty disc-empty">${spot("suonate")}<div>Per ora hai visto tutti i musicisti${activeFilters ? " con questi filtri" : ""}.</div></div>`));
+    box.appendChild(el(`<div class="empty disc-empty">${spot("suonate")}<div>${activeFilters ? t('app.disc_seen_all_filtered') : t('app.disc_seen_all')}</div></div>`));
     // 1 azione primaria + max 2 secondarie (niente muro di bottoni)
     const acts = [];
-    if (activeFilters) acts.push({ label: `${ic('sliders')} Allarga i filtri`, on: () => { state.filters = { instrument: "", level: "", genre: "", distance: DIST_MAX }; save(); renderDiscover2(); } });
-    acts.push({ label: `${ic('refresh')} Rivedi i profili scartati`, on: () => { state.passed = []; save(); renderDiscover2(); } });
-    if (!(state.me.deep && state.me.deep.done)) acts.push({ label: `${ic('resonance-profile')} Sblocca la Sintonia`, on: () => navigate("profile") });
-    if (adCount) acts.push({ label: `${ic('megaphone')} ${adCount} annunci in Bacheca`, on: () => navigate("board") });
-    if (pendingLikes.length) acts.push({ label: `${ic('heart')} Rivedi i “mi piace” (${pendingLikes.length})`, on: () => { state.liked = (state.liked || []).filter(id => !pendingLikes.includes(id)); save(); renderDiscover2(); } });
+    if (activeFilters) acts.push({ label: `${ic('sliders')} ${t('app.disc_widen_filters')}`, on: () => { state.filters = { instrument: "", level: "", genre: "", distance: DIST_MAX }; save(); renderDiscover2(); } });
+    acts.push({ label: `${ic('refresh')} ${t('app.disc_review_passed')}`, on: () => { state.passed = []; save(); renderDiscover2(); } });
+    if (!(state.me.deep && state.me.deep.done)) acts.push({ label: `${ic('resonance-profile')} ${t('app.disc_unlock_sintonia')}`, on: () => navigate("profile") });
+    if (adCount) acts.push({ label: `${ic('megaphone')} ${t('app.disc_ads_in_board', { count: adCount })}`, on: () => navigate("board") });
+    if (pendingLikes.length) acts.push({ label: `${ic('heart')} ${t('app.disc_review_likes', { count: pendingLikes.length })}`, on: () => { state.liked = (state.liked || []).filter(id => !pendingLikes.includes(id)); save(); renderDiscover2(); } });
     const wrap = el(`<div class="disc-empty-actions"></div>`);
     acts.slice(0, 3).forEach((a, i) => { const b = el(`<button class="btn ${i === 0 ? "" : "secondary "}small" type="button">${a.label}</button>`); b.onclick = a.on; wrap.appendChild(b); });
     box.appendChild(wrap);
@@ -839,16 +951,16 @@ function renderSwipe(box) {
   }
   // Nudge cold-start: spinge al Profilo Accordato per sbloccare la Sintonia (asset-firma).
   if (!(state.me.deep && state.me.deep.done)) {
-    const nudge = el(`<div class="disc-nudge">${ic('resonance-profile', 'accent')}<span>Completa il <b>Profilo Accordato</b> per sbloccare la <b>Sintonia</b> con ogni musicista.</span><button class="btn small" id="discNudge" type="button">Attiva</button></div>`);
+    const nudge = el(`<div class="disc-nudge">${ic('resonance-profile', 'accent')}<span>${t('app.disc_nudge')}</span><button class="btn small" id="discNudge" type="button">${ic('sparkles')} ${t('app.disc_activate')}</button></div>`);
     nudge.querySelector("#discNudge").onclick = () => navigate("profile");
     box.appendChild(nudge);
   }
   const wrap = el(`<div><div class="deck" id="deck"></div>
-    <div class="deck-undo"><button class="btn secondary small" id="btnUndo" type="button"${state.ui.lastSwipe ? "" : " disabled"}>${ic('refresh')} Annulla ultimo</button></div>
+    <div class="deck-undo"><button class="btn secondary small" id="btnUndo" type="button"${state.ui.lastSwipe ? "" : " disabled"}>${ic('refresh')} ${t('app.disc_undo_last')}</button></div>
     <div class="deck-actions">
-      <button class="round-btn pass" id="btnPass" aria-label="Passa" title="Passa">${ic('x')}</button>
-      <button class="round-btn info" id="btnInfo" aria-label="Vedi dettagli" title="Dettagli">${ic('info')}</button>
-      <button class="round-btn like" id="btnLike" aria-label="Connetti" title="Connetti">${ic('heart')}</button>
+      <button class="round-btn pass" id="btnPass" aria-label="${esc(t('app.disc_pass'))}" title="${esc(t('app.disc_pass'))}">${ic('x')}</button>
+      <button class="round-btn info" id="btnInfo" aria-label="${esc(t('app.disc_see_details'))}" title="${esc(t('app.disc_details'))}">${ic('info')}</button>
+      <button class="round-btn like" id="btnLike" aria-label="${esc(t('app.disc_connect'))}" title="${esc(t('app.disc_connect'))}">${ic('heart')}</button>
     </div></div>`);
   box.appendChild(wrap);
   const deckEl = $("#deck");
@@ -868,19 +980,19 @@ function discoverFilters() {
   const active = [f.instrument, f.level, f.genre].filter(Boolean).length + (f.distance < DIST_MAX ? 1 : 0);
   const open = !!state.ui.discoverFiltersOpen;
   const wrap = el(`<div class="disc-filters">
-    <button class="btn secondary small disc-filters-toggle" style="width:100%" aria-expanded="${open ? "true" : "false"}" aria-controls="discFiltersBody">${ic('sliders')} Filtri${active ? ` · ${active} attivi` : ""} <span class="df-chev" aria-hidden="true">${ic(open ? 'arrow-up' : 'arrow-down')}</span></button>
+    <button class="btn secondary small disc-filters-toggle" style="width:100%" aria-expanded="${open ? "true" : "false"}" aria-controls="discFiltersBody">${ic('sliders')} ${active ? t('app.disc_filters_active', { count: active }) : t('app.disc_filters')} <span class="df-chev" aria-hidden="true">${ic(open ? 'arrow-up' : 'arrow-down')}</span></button>
     <div class="disc-filters-body" id="discFiltersBody"${open ? "" : " hidden"}>
       <div class="filters">
         <div class="filter-row">
-          <div><label class="field">Strumento</label><select id="dfIns" aria-label="Strumento">${options(INSTRUMENTS, f.instrument, "Tutti")}</select></div>
-          <div><label class="field">Livello</label><select id="dfLvl" aria-label="Livello">${options(LEVELS, f.level, "Tutti")}</select></div>
+          <div><label class="field">${t('app.filter_instrument')}</label><select id="dfIns" aria-label="${esc(t('app.filter_instrument'))}">${options(INSTRUMENTS, f.instrument, t('app.filter_all'))}</select></div>
+          <div><label class="field">${t('app.filter_level')}</label><select id="dfLvl" aria-label="${esc(t('app.filter_level'))}">${options(LEVELS, f.level, t('app.filter_all'), levelLabel)}</select></div>
         </div>
         <div class="filter-row">
-          <div><label class="field">Genere</label><select id="dfGen" aria-label="Genere">${options(GENRES, f.genre, "Tutti")}</select></div>
-          <div><label class="field">Distanza: <span class="range-val" id="dfDistVal">${distLabel(f.distance)}</span></label><input type="range" id="dfDist" min="0" max="${DIST_STEPS.length - 1}" step="1" value="${distIndex(f.distance)}" aria-label="Distanza massima" aria-valuetext="${distLabel(f.distance)}"></div>
+          <div><label class="field">${t('app.filter_genre')}</label><select id="dfGen" aria-label="${esc(t('app.filter_genre'))}">${options(GENRES, f.genre, t('app.filter_all'), genreLabel)}</select></div>
+          <div><label class="field">${t('app.filter_distance_label', { value: `<span class="range-val" id="dfDistVal">${distLabel(f.distance)}</span>` })}</label><input type="range" id="dfDist" min="0" max="${DIST_STEPS.length - 1}" step="1" value="${distIndex(f.distance)}" aria-label="${esc(t('app.filter_max_distance'))}" aria-valuetext="${esc(distLabel(f.distance))}"></div>
         </div>
       </div>
-      <button class="btn secondary small" id="dfClear">Azzera filtri</button>
+      <button class="btn secondary small" id="dfClear">${t('app.filter_clear')}</button>
     </div>
   </div>`);
   wrap.querySelector(".disc-filters-toggle").onclick = () => { state.ui.discoverFiltersOpen = !state.ui.discoverFiltersOpen; save(); renderDiscover2(); };
@@ -903,22 +1015,22 @@ function swipeCard(p, isTop) {
     ? `<svg class="aff-wave mini" viewBox="0 0 140 24" aria-hidden="true"><path pathLength="240" d="M3 12 C 12 3, 23 3, 33 12 S 54 21, 64 12 S 85 3, 95 12 S 116 21, 126 12 S 134 9, 138 12"/></svg>` : "";
   const card = el(`
     <div class="swipe-card" data-id="${p.id}">
-      <div class="stamp like">JAM!</div>
-      <div class="stamp nope">NO</div>
+      <div class="stamp like">${t('app.stamp_jam')}</div>
+      <div class="stamp nope">${t('app.stamp_no')}</div>
       <div class="hero" style="background:${safeColor(p.color)}">
-        ${featured ? `<div class="feat-badge">${ic('sparkles')} In evidenza</div>` : ""}
+        ${featured ? `<div class="feat-badge">${ic('sparkles')} ${t('app.card_featured')}</div>` : ""}
         <div class="big-emoji">${esc(p.avatar)}</div>
         <div class="compat">${affLabel(aff)}${miniWave}</div>
       </div>
       <div class="body">
         <div class="name">${esc(p.name)} <span class="score">${ic('star')} ${avgScore(p.endo)}</span></div>
         ${standingFlair(p)}
-        <div class="loc">${ic('map-pin')} ${esc(p.city)} · ${p.distanceKm} km · ${esc(topLevel(p))}</div>
+        <div class="loc">${ic('map-pin')} ${esc(p.city)} · ${p.distanceKm} km · ${esc(levelLabel(topLevel(p)))}</div>
         <div class="tagline">“${esc(p.tagline || "")}”</div>
         ${sceneSignalsHtml(p)}
         <div class="tags">
           ${instrTags(p)}
-          ${p.genres.map(g => `<span class="tag">${esc(g)}</span>`).join("")}
+          ${p.genres.map(g => `<span class="tag">${esc(genreLabel(g))}</span>`).join("")}
         </div>
         <div class="common">${affCommonHtml(aff, p)}</div>
       </div>
@@ -964,6 +1076,35 @@ function flyOut(card, dir, done) {
 
 function decide(p, action, skipAnim) {
   if (decideLock) return; decideLock = true;
+  if (isProductionRuntime()) {
+    const decision = action === "like" ? "liked" : "passed";
+    const list = decision === "liked" ? state.liked : state.passed;
+    if (!list.includes(p.id)) list.push(p.id);
+    state.ui.lastSwipe = { id: p.id, action };
+    save();
+    JM.Api.swipe(p.id, decision).then((result) => {
+      if (result.matched && !state.matches.includes(p.id)) {
+        state.matches.push(p.id);
+        state.ui.lastSwipe = null;
+        save();
+        notify("match", t('app.new_match_notif', { name: p.name.split(" ")[0] }), { view: "messages" });
+        showMatch(p);
+      } else if (decision === "liked") {
+        toast(t('app.interest_sent', { name: p.name.split(" ")[0] }), ic("heart", "accent"));
+      }
+    }).catch((error) => {
+      state.liked = state.liked.filter((id) => id !== p.id);
+      state.passed = state.passed.filter((id) => id !== p.id);
+      save();
+      toast(error.message || "Richiesta non riuscita", ic("alert-triangle"), { error: true });
+    });
+    if (!skipAnim) {
+      const card = $(".swipe-card:not(.peek)");
+      if (card) return flyOut(card, action === "like" ? 1 : -1, () => refreshSwipe());
+    }
+    refreshSwipe();
+    return;
+  }
   if (action === "like") {
     if (!state.liked.includes(p.id)) state.liked.push(p.id);
     const matched = Math.random() < (0.30 + affinityPct(p) / 160);
@@ -971,11 +1112,11 @@ function decide(p, action, skipAnim) {
       state.matches.push(p.id);
       if (!state.messages[p.id] || !state.messages[p.id].length) { state.messages[p.id] = []; pushMsg(p.id, { from: "them", text: opener(p) }); }
       state.ui.unread = true; state.ui.lastSwipe = null; save();
-      notify("match", `Nuovo match con ${p.name.split(" ")[0]}! Scrivigli in chat.`, { view: "messages" });
+      notify("match", t('app.new_match_notif', { name: p.name.split(" ")[0] }), { view: "messages" });
       if (!skipAnim) { const card = $(".swipe-card:not(.peek)"); if (card) { return flyOut(card, 1, () => showMatch(p)); } }
       showMatch(p); return;
     }
-    if (!matched) toast(`Interesse inviato a ${p.name.split(" ")[0]}`, ic("heart", "accent"));
+    if (!matched) toast(t('app.interest_sent', { name: p.name.split(" ")[0] }), ic("heart", "accent"));
     state.ui.lastSwipe = { id: p.id, action: "like" };
   } else {
     if (!state.passed.includes(p.id)) state.passed.push(p.id);
@@ -996,11 +1137,11 @@ function undoLastSwipe() {
   state.ui.lastSwipe = null; save(); haptic("Light"); refreshSwipe();
 }
 function opener(p) {
-  const ins = (p.instruments && p.instruments[0]) ? p.instruments[0].toLowerCase() : "il tuo strumento";
+  const ins = (p.instruments && p.instruments[0]) ? p.instruments[0].toLowerCase() : t('app.opener_default_instrument');
   const lines = [
-    `Ciao! Ho visto che suoni ${ins}, ci organizziamo per una prova?`,
-    `Ehi! Bel profilo, che ne dici di una jam questa settimana?`,
-    `Ciao 🤘 cerchi una band attiva? Parliamone!`
+    t('app.opener_1', { instrument: ins }),
+    t('app.opener_2'),
+    t('app.opener_3')
   ];
   return lines[hash(p.id) % lines.length];
 }
@@ -1009,7 +1150,7 @@ function showMatch(p) {
   const theirName = esc(p.name.split(" ")[0]);
   const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   const ov = el(`
-    <div class="match-overlay" role="dialog" aria-modal="true" aria-label="È un match">
+    <div class="match-overlay" role="dialog" aria-modal="true" aria-label="${esc(t('app.match_overlay_label'))}">
       <div class="match-stage">
         <canvas class="match-wave" aria-hidden="true"></canvas>
         <div class="match-ring" aria-hidden="true"></div>
@@ -1019,12 +1160,12 @@ function showMatch(p) {
         </div>
       </div>
       <div class="match-copy">
-        <h2 class="match-title" role="status" aria-live="polite">È un match!</h2>
-        <p class="match-sub">Tu e ${theirName} siete <b>in fase</b>. Una sola conversazione fatta di suono.</p>
+        <h2 class="match-title" role="status" aria-live="polite">${t('app.match_title')}</h2>
+        <p class="match-sub">${t('app.match_sub', { name: theirName })}</p>
       </div>
       <div class="match-actions">
-        <button class="btn" id="mChat">${ic('chat-bubble')} Scrivi a ${theirName}</button>
-        <button class="btn secondary" id="mKeep">Continua a scorrere</button>
+        <button class="btn" id="mChat">${ic('chat-bubble')} ${t('app.match_write_to', { name: theirName })}</button>
+        <button class="btn secondary" id="mKeep">${t('app.match_keep_scrolling')}</button>
       </div>
     </div>`);
   document.body.appendChild(ov);
@@ -1126,13 +1267,13 @@ function renderSearch(box) {
   box.appendChild(el(`
     <div class="filters">
       <div class="filter-row">
-        <div><label class="field">Strumento</label><select id="fIns" aria-label="Strumento">${options(INSTRUMENTS, f.instrument, "Tutti")}</select></div>
-        <div><label class="field">Livello</label><select id="fLvl" aria-label="Livello">${options(LEVELS, f.level, "Tutti")}</select></div>
+        <div><label class="field">${t('app.filter_instrument')}</label><select id="fIns" aria-label="${esc(t('app.filter_instrument'))}">${options(INSTRUMENTS, f.instrument, t('app.filter_all'))}</select></div>
+        <div><label class="field">${t('app.filter_level')}</label><select id="fLvl" aria-label="${esc(t('app.filter_level'))}">${options(LEVELS, f.level, t('app.filter_all'), levelLabel)}</select></div>
       </div>
       <div class="filter-row">
-        <div><label class="field">Genere</label><select id="fGen" aria-label="Genere">${options(GENRES, f.genre, "Tutti")}</select></div>
-        <div><label class="field">Distanza: <span class="range-val" id="fDistVal">${distLabel(f.distance)}</span></label>
-          <input type="range" id="fDist" min="0" max="${DIST_STEPS.length - 1}" step="1" value="${distIndex(f.distance)}" aria-label="Distanza massima" aria-valuetext="${distLabel(f.distance)}" /></div>
+        <div><label class="field">${t('app.filter_genre')}</label><select id="fGen" aria-label="${esc(t('app.filter_genre'))}">${options(GENRES, f.genre, t('app.filter_all'), genreLabel)}</select></div>
+        <div><label class="field">${t('app.filter_distance_label', { value: `<span class="range-val" id="fDistVal">${distLabel(f.distance)}</span>` })}</label>
+          <input type="range" id="fDist" min="0" max="${DIST_STEPS.length - 1}" step="1" value="${distIndex(f.distance)}" aria-label="${esc(t('app.filter_max_distance'))}" aria-valuetext="${esc(distLabel(f.distance))}" /></div>
       </div>
     </div>
     <div id="results"></div>`));
@@ -1149,20 +1290,20 @@ function matchProfiles() {
 }
 // Stato del profilo rispetto a te (la lista "Cerca" lo mostra, così le due viste si parlano).
 function profileState(p) {
-  if (state.matches.includes(p.id)) return { cls: "ps-match", icon: "match", text: "Già in contatto" };
-  if ((state.liked || []).includes(p.id)) return { cls: "ps-like", icon: "heart", text: "Mi piace inviato" };
-  if ((state.passed || []).includes(p.id)) return { cls: "ps-pass", icon: "x", text: "Scartato" };
+  if (state.matches.includes(p.id)) return { cls: "ps-match", icon: "match", text: t('app.pstate_in_contact') };
+  if ((state.liked || []).includes(p.id)) return { cls: "ps-like", icon: "heart", text: t('app.pstate_like_sent') };
+  if ((state.passed || []).includes(p.id)) return { cls: "ps-pass", icon: "x", text: t('app.pstate_passed') };
   return null;
 }
 function paintResults() {
   const box = $("#results"); if (!box) return;
   const list = matchProfiles();
   if (!list.length) {
-    box.innerHTML = `<div class="empty">${illus("radiant")}Nessun musicista con questi filtri.${state.filters.distance < DIST_MAX ? " Prova ad allargare la distanza." : ""}</div>`;
-    if (state.filters.distance < DIST_MAX) { const b = el(`<button class="btn secondary small" style="margin-top:8px">${ic('plus')} Allarga a Ovunque</button>`); b.onclick = () => { state.filters.distance = DIST_MAX; save(); renderDiscover2(); }; box.appendChild(b); }
+    box.innerHTML = `<div class="empty">${illus("radiant")}${t('app.search_no_results')}${state.filters.distance < DIST_MAX ? t('app.search_try_widen') : ""}</div>`;
+    if (state.filters.distance < DIST_MAX) { const b = el(`<button class="btn secondary small" style="margin-top:8px">${ic('plus')} ${t('app.search_widen_anywhere')}</button>`); b.onclick = () => { state.filters.distance = DIST_MAX; save(); renderDiscover2(); }; box.appendChild(b); }
     return;
   }
-  box.innerHTML = `<p class="view-sub">${list.length} risultat${list.length === 1 ? "o" : "i"} · ordinati per affinità</p>`;
+  box.innerHTML = `<p class="view-sub">${t(list.length === 1 ? 'app.search_results_one' : 'app.search_results_other', { count: list.length })}</p>`;
   list.forEach(p => box.appendChild(profileCard(p)));
 }
 function profileCard(p) {
@@ -1174,16 +1315,16 @@ function profileCard(p) {
         <div class="meta">
           <div class="name">${esc(p.name)} <span class="score">${ic('star')} ${avgScore(p.endo)}</span>${st ? ` <span class="pstate ${st.cls}">${ic(st.icon)} ${esc(st.text)}</span>` : ""}</div>
           ${standingFlair(p)}
-          <div class="loc">${ic('map-pin')} ${esc(p.city)} · ${p.distanceKm} km · ${esc(topLevel(p))}</div>
+          <div class="loc">${ic('map-pin')} ${esc(p.city)} · ${p.distanceKm} km · ${esc(levelLabel(topLevel(p)))}</div>
         </div>
         <div class="compat-mini" style="font-weight:800;color:var(--accent)">${affLabel(aff)}</div>
       </div>
       ${sceneSignalsHtml(p)}
       <div class="tags">
         ${instrTags(p)}
-        ${p.genres.slice(0, 3).map(g => `<span class="tag">${esc(g)}</span>`).join("")}
+        ${p.genres.slice(0, 3).map(g => `<span class="tag">${esc(genreLabel(g))}</span>`).join("")}
       </div>
-      <div class="tags" style="margin-top:6px"><span class="dist">${ic('music-note')} ${(p.repertoire || []).length} brani</span><span class="dist">${affCommonHtml(aff, p)}</span></div>
+      <div class="tags" style="margin-top:6px"><span class="dist">${ic('music-note')} ${t('app.songs_count', { count: (p.repertoire || []).length })}</span><span class="dist">${affCommonHtml(aff, p)}</span></div>
     </div>`);
   clickableCard(c, () => openProfileSheet(p));
   return c;
@@ -1197,45 +1338,45 @@ function openProfileSheet(p, opts) {
   const jammed = !opts.preview && typeof hasJammedWith === "function" && hasJammedWith(p);
   const aff = opts.preview ? null : getAffinity(p); // niente "Sintonia con sé stessi" in anteprima
   openModal(`
-    ${opts.preview ? `<div class="aff-note" style="margin-top:0">${ic('info')} Stai vedendo il tuo <b>profilo pubblico</b>, come appare agli altri musicisti.</div>` : ""}
+    ${opts.preview ? `<div class="aff-note" style="margin-top:0">${ic('info')} ${t('app.sheet_public_preview')}</div>` : ""}
     <div style="text-align:center">
       <div style="display:flex;justify-content:center">${avatarTag(p, true)}</div>
       <h2>${esc(p.name)} ${p.deep && p.deep.done ? `<span class="tag accent" style="vertical-align:middle">${ic("resonance-profile", "grad")}</span>` : ''}</h2>
       ${standingFlair(p, true)}
-      <div class="loc">${ic('map-pin')} ${esc(p.city)} · ${p.distanceKm} km · ${esc(topLevel(p))} · <span class="score">${ic('star')} ${avgScore(p.endo)}</span></div>
+      <div class="loc">${ic('map-pin')} ${esc(p.city)} · ${p.distanceKm} km · ${esc(levelLabel(topLevel(p)))} · <span class="score">${ic('star')} ${avgScore(p.endo)}</span></div>
       ${aff ? affHeaderHtml(aff) : ""}
     </div>
     <div class="tags" style="justify-content:center;margin-top:10px">
       ${instrTags(p)}
-      ${p.genres.map(g => `<span class="tag">${esc(g)}</span>`).join("")}
+      ${p.genres.map(g => `<span class="tag">${esc(genreLabel(g))}</span>`).join("")}
     </div>
-    ${p.bio ? `<div class="section-label">Bio</div><p style="margin:0;line-height:1.5">${esc(p.bio)}</p>` : ""}
-    ${links.length ? `<div class="section-label">Ascolta</div><div class="linkrow">${links.map(([k, v]) => `<a href="${esc(safeUrl(v))}" target="_blank" rel="noopener noreferrer">${({ youtube: "▶ YouTube", spotify: "♫ Spotify", instagram: "◎ Instagram" })[k] || k}</a>`).join("")}</div>` : ""}
-    <div class="section-label">Repertorio</div>
+    ${p.bio ? `<div class="section-label">${t('app.sheet_bio')}</div><p style="margin:0;line-height:1.5">${esc(p.bio)}</p>` : ""}
+    ${links.length ? `<div class="section-label">${t('app.sheet_listen')}</div><div class="linkrow">${links.map(([k, v]) => `<a href="${esc(safeUrl(v))}" target="_blank" rel="noopener noreferrer">${({ youtube: "▶ YouTube", spotify: "♫ Spotify", instagram: "◎ Instagram" })[k] || k}</a>`).join("")}</div>` : ""}
+    <div class="section-label">${t('app.sheet_repertoire')}</div>
     ${p.repertoire.length ? p.repertoire.map(r => {
       const w = repWrittenKeys(r), cc = repConcertKeys(r);
       const showC = (r.transpose || 0) && cc.length && cc.join() !== w.join();
       return `<div class="rep-item"><div><div class="song">${esc(r.title)}</div><div class="artist">${esc(r.artist || "")}</div></div>
         <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end">${w.length ? `<span class="key-badge">${esc(w.join(", "))}</span>` : ""}${showC ? `<span class="key-badge concert">🎹 ${esc(cc.join(", "))}</span>` : ""}</div></div>`;
-    }).join("") : `<p class="view-sub">Nessun brano indicato.</p>`}
-    <div class="section-label">Reputazione tra JamMates</div>
+    }).join("") : `<p class="view-sub">${t('app.sheet_no_songs')}</p>`}
+    <div class="section-label">${t('app.sheet_reputation')}</div>
     ${endoBlock(p.endo)}
     ${jammateExtra(p.endo)}
     ${aff ? affDetailHtml(aff) : ""}
     ${opts.preview
-      ? `<div style="margin-top:22px"><button class="btn" id="closePrev">${ic('check')} Chiudi anteprima</button></div>`
-      : `<div style="margin-top:22px"><button class="btn" id="contactBtn">${ic('chat-bubble')} ${matched ? "Scrivi a" : "Contatta"} ${esc(p.name.split(" ")[0])}</button></div>
-    <button class="btn secondary" id="inviteBandBtn" style="margin-top:10px">${ic('music-note')} Invita nella tua band</button>
-    ${jammed ? `<button class="btn secondary" id="endorseBtn" style="margin-top:10px">${ic('star')} Valuta dopo la jam</button>` : `<div class="aff-note" style="margin-top:10px">${ic('star')} Il feedback tra musicisti si sblocca dopo aver <b>completato una jam insieme</b> (niente valutazioni a caso).</div>`}
-    <button class="btn secondary small" id="reportUser" style="margin-top:14px">${ic('flag')} Segnala</button>`}
+      ? `<div style="margin-top:22px"><button class="btn" id="closePrev">${ic('check')} ${t('app.sheet_close_preview')}</button></div>`
+      : `<div style="margin-top:22px"><button class="btn" id="contactBtn">${ic('chat-bubble')} ${matched ? t('app.sheet_write_to') : t('app.sheet_contact')} ${esc(p.name.split(" ")[0])}</button></div>
+    <button class="btn secondary" id="inviteBandBtn" style="margin-top:10px">${ic('music-note')} ${t('app.sheet_invite_band')}</button>
+    ${jammed ? `<button class="btn secondary" id="endorseBtn" style="margin-top:10px">${ic('star')} ${t('app.sheet_rate_after_jam')}</button>` : `<div class="aff-note" style="margin-top:10px">${ic('star')} ${t('app.sheet_feedback_locked')}</div>`}
+    <button class="btn secondary small" id="reportUser" style="margin-top:14px">${ic('flag')} ${t('app.sheet_report')}</button>`}
   `);
   if (opts.preview) { const cp = $("#closePrev"); if (cp) cp.onclick = closeModal; }
   else {
-    if ($("#reportUser")) $("#reportUser").onclick = () => openReportSheet("Profilo di " + p.name, "profile:" + p.id);
+    if ($("#reportUser")) $("#reportUser").onclick = () => openReportSheet(t('app.sheet_report_profile_of', { name: p.name }), "profile:" + p.id);
     $("#contactBtn").onclick = () => {
       const fresh = !state.matches.includes(p.id);
       if (fresh) { state.matches.push(p.id); if (!state.messages[p.id]) state.messages[p.id] = []; save(); }
-      if (fresh) toast("Conversazione avviata con " + (p.name || "").split(" ")[0], ic('chat-bubble'));
+      if (fresh) toast(t('app.sheet_conversation_started', { name: (p.name || "").split(" ")[0] }), ic('chat-bubble'));
       closeModal(); navigate("messages"); setTimeout(() => openChat(p), 50);
     };
     $("#inviteBandBtn").onclick = () => openInviteToBand(p);
@@ -1248,7 +1389,7 @@ function openProfileSheet(p, opts) {
 function jammateExtra(e) {
   if (!e) return "";
   const chips = [];
-  if (e.rejamTotal) chips.push(`<span class="tag lvl">${ic('refresh')} ${Math.round((e.rejamYes || 0) / e.rejamTotal * 100)}% rigiocherebbe</span>`);
+  if (e.rejamTotal) chips.push(`<span class="tag lvl">${ic('refresh')} ${t('app.jammate_extra_rejam', { pct: Math.round((e.rejamYes || 0) / e.rejamTotal * 100) })}</span>`);
   const tags = e.tags ? Object.entries(e.tags).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([t]) => t) : [];
   tags.forEach(t => chips.push(`<span class="tag">${esc(t)}</span>`));
   return chips.length ? `<div class="tags" style="margin-top:8px">${chips.join("")}</div>` : "";
@@ -1300,10 +1441,10 @@ function relDate(iso) {
   if (!iso) return "";
   const d = new Date(iso + "T00:00:00"), t = new Date(); t.setHours(0, 0, 0, 0);
   const diff = Math.round((d - t) / 86400e3);
-  if (diff < 0) return "scaduto";
-  if (diff === 0) return "oggi";
-  if (diff === 1) return "domani";
-  if (diff < 7) return "tra " + diff + " giorni";
+  if (diff < 0) return t('app.rel_expired');
+  if (diff === 0) return t('app.rel_today');
+  if (diff === 1) return t('app.rel_tomorrow');
+  if (diff < 7) return t('app.rel_in_days', { count: diff });
   return formatDate(iso);
 }
 function normalizeEvents(evs) {
@@ -1322,8 +1463,8 @@ function applyToSlot(ev, instrument) {
   s.filled = true; s.applicant = me;
   haptic("Medium"); save();
   // Azione distruttiva (occupa lo slot, visibile agli altri): offri sempre un Annulla immediato.
-  toast("Candidatura inviata: " + instrument, ic("celebration", "accent"), {
-    actionLabel: "Annulla",
+  toast(t('app.board_application_sent', { instrument }), ic("celebration", "accent"), {
+    actionLabel: t('app.cancel'),
     onAction: () => { if (s.applicant === me) { s.filled = false; s.applicant = null; save(); renderBoard2(); } }
   });
   renderBoard2();
@@ -1331,8 +1472,8 @@ function applyToSlot(ev, instrument) {
 function toggleSaveAd(ev) {
   state.savedAds = state.savedAds || [];
   const i = state.savedAds.indexOf(ev.id);
-  if (i >= 0) { state.savedAds.splice(i, 1); toast("Rimosso dai salvati"); }
-  else { state.savedAds.push(ev.id); haptic("Light"); toast("Annuncio salvato", ic("star", "accent")); }
+  if (i >= 0) { state.savedAds.splice(i, 1); toast(t('app.board_removed_saved')); }
+  else { state.savedAds.push(ev.id); haptic("Light"); toast(t('app.board_ad_saved'), ic("star", "accent")); }
   save(); renderBoard2();
 }
 function checkBoardMatches() {
@@ -1341,8 +1482,8 @@ function checkBoardMatches() {
   const fresh = (state.events || []).filter(e => !evIsExpired(e) && evMatchesMe(e) && (e.createdAt || 0) > last);
   if (fresh.length && typeof notify === "function") {
     notify("megaphone", fresh.length === 1
-      ? "Un annuncio in Bacheca cerca i tuoi strumenti."
-      : fresh.length + " annunci in Bacheca cercano i tuoi strumenti.", { view: "board" });
+      ? t('app.board_match_one')
+      : t('app.board_match_other', { count: fresh.length }), { view: "board" });
   }
   state.boardSeen = Date.now(); save();
 }
@@ -1350,14 +1491,14 @@ function renderBoard(app) {
   const mode = state.ui.boardMode || "list";
   app.appendChild(el(`
     <div>
-      <div class="row-between"><h1 class="view-title">Bacheca</h1>
+      <div class="row-between"><h1 class="view-title">${t('app.board_title')}</h1>
       <div class="hdr-actions">
-        <button class="btn small secondary" id="boardRefresh" type="button" aria-label="Aggiorna la bacheca">${ic('refresh')} Aggiorna</button>
-        <button class="btn small" id="newAd">${ic('plus')} Nuovo</button></div></div>
-      <p class="view-sub">Chi cerca chi: annunci di band e jam con i ruoli che mancano.</p>
+        <button class="btn small secondary" id="boardRefresh" type="button" aria-label="${esc(t('app.board_refresh_aria'))}">${ic('refresh')} ${t('app.board_refresh')}</button>
+        <button class="btn small" id="newAd">${ic('plus')} ${t('app.board_new')}</button></div></div>
+      <p class="view-sub">${t('app.board_sub')}</p>
       <div class="segmented">
-        <button data-bm="list" class="${mode === "list" ? "on" : ""}">${ic('list')} Annunci</button>
-        <button data-bm="map" class="${mode === "map" ? "on" : ""}">${ic('map')} Mappa jam</button>
+        <button data-bm="list" class="${mode === "list" ? "on" : ""}">${ic('list')} ${t('app.board_ads')}</button>
+        <button data-bm="map" class="${mode === "map" ? "on" : ""}">${ic('map')} ${t('app.board_jam_map')}</button>
       </div>
       <div id="boardBody"></div>
     </div>`));
@@ -1372,13 +1513,13 @@ function renderBoardList(box) {
     <div>
       <div class="filters">
         <div class="filter-row">
-          <select id="bfIns">${options(INSTRUMENTS, boardFilter.instrument, "Tutti gli strumenti")}</select>
-          <select id="bfGen">${options(GENRES, boardFilter.genre, "Tutti i generi")}</select>
+          <select id="bfIns">${options(INSTRUMENTS, boardFilter.instrument, t('app.board_all_instruments'))}</select>
+          <select id="bfGen">${options(GENRES, boardFilter.genre, t('app.board_all_genres'), genreLabel)}</select>
         </div>
         <div class="filter-row">
-          <button class="btn small ${boardFilter.forMe ? "" : "secondary"}" id="bfForMe">${ic('target')} Per me</button>
-          <button class="btn small ${boardFilter.openOnly ? "" : "secondary"}" id="bfOpen">${ic('plus')} Slot liberi</button>
-          <button class="btn small ${boardFilter.saved ? "" : "secondary"}" id="bfSaved">${ic('star')} Salvati</button>
+          <button class="btn small ${boardFilter.forMe ? "" : "secondary"}" id="bfForMe">${ic('target')} ${t('app.board_for_me')}</button>
+          <button class="btn small ${boardFilter.openOnly ? "" : "secondary"}" id="bfOpen">${ic('plus')} ${t('app.board_open_slots')}</button>
+          <button class="btn small ${boardFilter.saved ? "" : "secondary"}" id="bfSaved">${ic('star')} ${t('app.board_saved')}</button>
         </div>
       </div>
       <div id="eventList"></div>
@@ -1392,18 +1533,18 @@ function renderBoardList(box) {
 }
 function paintEvents() {
   const box = $("#eventList"); if (!box) return;
-  if (!state.events.length) return box.innerHTML = `<div class="empty">${illus("quiet")}Ancora nessun annuncio.<br>Creane uno con ${ic('plus')} Nuovo.</div>`;
+  if (!state.events.length) return box.innerHTML = `<div class="empty">${illus("quiet")}${t('app.board_no_ads')}<br>${t('app.board_create_one_with')} ${ic('plus')} ${t('app.board_new')}.</div>`;
   const list = state.events.filter(boardMatches).slice().sort((a, b) => evRelevance(b) - evRelevance(a));
   if (!list.length) {
     const anyFilter = boardFilter.instrument || boardFilter.genre || boardFilter.openOnly || boardFilter.forMe || boardFilter.saved;
-    box.innerHTML = `<div class="empty">${illus("radiant")}Nessun annuncio con questi filtri.${anyFilter ? `<br><button class="btn small secondary" id="adClearF" type="button" style="margin-top:10px">Azzera filtri</button>` : ""}</div>`;
+    box.innerHTML = `<div class="empty">${illus("radiant")}${t('app.board_no_ads_filters')}${anyFilter ? `<br><button class="btn small secondary" id="adClearF" type="button" style="margin-top:10px">${t('app.filter_clear')}</button>` : ""}</div>`;
     const cf = $("#adClearF"); if (cf) cf.onclick = () => { boardFilter.instrument = ""; boardFilter.genre = ""; boardFilter.openOnly = false; boardFilter.forMe = false; boardFilter.saved = false; renderBoard2(); };
     return;
   }
   box.innerHTML = "";
   const forMe = state.events.filter(e => !evIsExpired(e) && evMatchesMe(e)).length;
   if (forMe && !boardFilter.forMe && !boardFilter.saved) {
-    const banner = el(`<div class="ad-foryou">${ic('target', 'accent')}<span><b>${forMe}</b> ${forMe === 1 ? "annuncio cerca" : "annunci cercano"} i tuoi strumenti</span><button class="btn small" id="adForYou" type="button">Mostra</button></div>`);
+    const banner = el(`<div class="ad-foryou">${ic('target', 'accent')}<span>${t(forMe === 1 ? 'app.board_for_you_one' : 'app.board_for_you_other', { count: forMe })}</span><button class="btn small" id="adForYou" type="button">${t('app.show')}</button></div>`);
     banner.querySelector("#adForYou").onclick = () => { boardFilter.forMe = true; renderBoard2(); };
     box.appendChild(banner);
   }
@@ -1413,11 +1554,11 @@ function eventCard(ev) {
   const open = evOpenSlots(ev), expired = evIsExpired(ev), status = myAdStatus(ev);
   const saved = (state.savedAds || []).includes(ev.id), interest = evInterest(ev);
   const badges = [];
-  if (ev.featured && !expired) badges.push(`<span class="ad-badge feat">${ic('sparkles')} In evidenza</span>`);
-  if (evIsNew(ev) && !expired) badges.push(`<span class="ad-badge new">Nuovo</span>`);
-  if (expired) badges.push(`<span class="ad-badge exp">Chiuso</span>`);
-  if (status === "applied") badges.push(`<span class="ad-badge mine">${ic('check')} Candidato</span>`);
-  else if (status === "wait") badges.push(`<span class="ad-badge mine">${ic('clock')} In lista</span>`);
+  if (ev.featured && !expired) badges.push(`<span class="ad-badge feat">${ic('sparkles')} ${t('app.card_featured')}</span>`);
+  if (evIsNew(ev) && !expired) badges.push(`<span class="ad-badge new">${t('app.ad_new')}</span>`);
+  if (expired) badges.push(`<span class="ad-badge exp">${t('app.ad_closed')}</span>`);
+  if (status === "applied") badges.push(`<span class="ad-badge mine">${ic('check')} ${t('app.ad_applied')}</span>`);
+  else if (status === "wait") badges.push(`<span class="ad-badge mine">${ic('clock')} ${t('app.ad_waitlisted')}</span>`);
   const c = el(`
     <div class="card ad-card${ev.featured && !expired ? " featured" : ""}${expired ? " expired" : ""}">
       <div class="ad-top">
@@ -1426,14 +1567,14 @@ function eventCard(ev) {
           <div class="ad-title">${esc(ev.title)}</div>
           <div class="ad-meta">${esc(ev.author)} · ${ic('map-pin')} ${esc(ev.city)} · ${ev.distanceKm} km</div>
         </div>
-        <button class="ad-save${saved ? " on" : ""}" data-save type="button" aria-label="${saved ? "Rimuovi dai salvati" : "Salva annuncio"}">${ic('star')}</button>
+        <button class="ad-save${saved ? " on" : ""}" data-save type="button" aria-label="${esc(saved ? t('app.ad_remove_saved') : t('app.ad_save'))}">${ic('star')}</button>
       </div>
       ${badges.length ? `<div class="ad-badges">${badges.join("")}</div>` : ""}
-      <div class="ad-when">${ic('calendar')} ${relDate(ev.date)}${interest ? ` · ${ic('thumbs-up')} ${interest} interessat${interest === 1 ? "o" : "i"}` : ""}</div>
+      <div class="ad-when">${ic('calendar')} ${relDate(ev.date)}${interest ? ` · ${ic('thumbs-up')} ${t(interest === 1 ? 'app.ad_interested_one' : 'app.ad_interested_other', { count: interest })}` : ""}</div>
       ${open.length
-      ? `<div class="ad-seek"><span class="ad-seek-lbl">Cercano</span>${open.map(s => `<button class="ad-slot" type="button" data-apply="${esc(s.instrument)}"${expired ? " disabled" : ""}>${ic('plus')} ${esc(s.instrument)}</button>`).join("")}</div>`
-      : `<div class="ad-full">${ic('check')} Formazione completa</div>`}
-      <div class="tags">${ev.genres.map(g => `<span class="tag">${esc(g)}</span>`).join("")}</div>
+      ? `<div class="ad-seek"><span class="ad-seek-lbl">${t('app.ad_seek')}</span>${open.map(s => `<button class="ad-slot" type="button" data-apply="${esc(s.instrument)}"${expired ? " disabled" : ""}>${ic('plus')} ${esc(vocabLabel(s.instrument))}</button>`).join("")}</div>`
+      : `<div class="ad-full">${ic('check')} ${t('app.ad_full_lineup')}</div>`}
+      <div class="tags">${ev.genres.map(g => `<span class="tag">${esc(genreLabel(g))}</span>`).join("")}</div>
     </div>`);
   clickableCard(c, (e) => { if (e.target.closest("[data-apply],[data-save]")) return; openEventSheet(ev); });
   c.querySelectorAll("[data-apply]").forEach(b => b.onclick = (e) => { e.stopPropagation(); if (!b.disabled) applyToSlot(ev, b.dataset.apply); });
@@ -1445,12 +1586,12 @@ function openEventSheet(ev) {
     <span class="event-date">${ic('calendar')} ${formatDate(ev.date)}</span>
     <h2>${esc(ev.title)}</h2>
     <div class="loc">${ev.authorAvatar ? esc(ev.authorAvatar) : ""} ${esc(ev.author)} · ${ic('map-pin')} ${esc(ev.city)} · ${ev.distanceKm} km</div>
-    <div class="tags" style="margin-top:8px">${ev.genres.map(g => `<span class="tag">${esc(g)}</span>`).join("")}</div>
-    <div class="section-label">Descrizione</div><p style="margin:0;line-height:1.5">${esc(ev.description)}</p>
-    <div class="section-label">Slot strumenti</div><div id="slotList"></div>
-    <button class="btn secondary" id="evMsg" style="margin-top:16px">${ic('send')} Scrivi a ${esc(ev.author)}</button>
-    <button class="btn secondary small" id="evReport" style="margin-top:10px">${ic('flag')} Segnala annuncio</button>`);
-  if ($("#evReport")) $("#evReport").onclick = () => openReportSheet("Annuncio: " + ev.title, "ad:" + ev.id);
+    <div class="tags" style="margin-top:8px">${ev.genres.map(g => `<span class="tag">${esc(genreLabel(g))}</span>`).join("")}</div>
+    <div class="section-label">${t('app.ev_description')}</div><p style="margin:0;line-height:1.5">${esc(ev.description)}</p>
+    <div class="section-label">${t('app.ev_instrument_slots')}</div><div id="slotList"></div>
+    <button class="btn secondary" id="evMsg" style="margin-top:16px">${ic('send')} ${t('app.ev_write_to', { name: esc(ev.author) })}</button>
+    <button class="btn secondary small" id="evReport" style="margin-top:10px">${ic('flag')} ${t('app.ev_report_ad')}</button>`);
+  if ($("#evReport")) $("#evReport").onclick = () => openReportSheet(t('app.ev_report_label', { title: ev.title }), "ad:" + ev.id);
   const sl = $("#slotList");
   const myName = state.me.name || "Tu";
   ev.slots.forEach((s) => {
@@ -1458,19 +1599,19 @@ function openEventSheet(ev) {
     const mine = s.applicant === myName;
     const iWait = s.waitlist.includes(myName);
     let right;
-    if (!s.filled) right = `<button class="btn small" data-act="apply">Candidati</button>`;
-    else if (mine) right = `<button class="btn small secondary" data-act="withdraw">Rinuncia</button>`;
-    else if (iWait) right = `<span class="tag">In lista d'attesa · ${s.waitlist.indexOf(myName) + 1}º</span>`;
-    else right = `<span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end"><span class="tag lvl">Occupato${s.waitlist.length ? ` · lista ${s.waitlist.length}` : ""}</span><button class="btn small secondary" data-act="wait">Lista d'attesa</button></span>`;
-    const row = el(`<div class="rep-item"><span class="song">${s.filled ? ic('check') : ic('search')} ${esc(s.instrument)}${s.applicant ? ` <span class="view-sub" style="font-size:.78rem">· ${esc(s.applicant)}</span>` : ""}</span>${right}</div>`);
+    if (!s.filled) right = `<button class="btn small" data-act="apply">${t('app.slot_apply')}</button>`;
+    else if (mine) right = `<button class="btn small secondary" data-act="withdraw">${t('app.slot_withdraw')}</button>`;
+    else if (iWait) right = `<span class="tag">${t('app.slot_in_waitlist', { pos: s.waitlist.indexOf(myName) + 1 })}</span>`;
+    else right = `<span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end"><span class="tag lvl">${s.waitlist.length ? t('app.slot_occupied_list', { count: s.waitlist.length }) : t('app.slot_occupied')}</span><button class="btn small secondary" data-act="wait">${t('app.slot_join_waitlist')}</button></span>`;
+    const row = el(`<div class="rep-item"><span class="song">${s.filled ? ic('check') : ic('search')} ${esc(vocabLabel(s.instrument))}${s.applicant ? ` <span class="view-sub" style="font-size:.78rem">· ${esc(s.applicant)}</span>` : ""}</span>${right}</div>`);
     const btn = row.querySelector("[data-act]");
     if (btn) btn.onclick = () => {
       const act = btn.dataset.act;
-      if (act === "apply") { s.filled = true; s.applicant = myName; toast(`Candidatura inviata: ${s.instrument}`, ic('celebration', 'accent')); }
-      else if (act === "wait") { s.waitlist.push(myName); toast(`Sei in lista d'attesa per ${s.instrument}. Se si libera, tocca a te.`); }
+      if (act === "apply") { s.filled = true; s.applicant = myName; toast(t('app.board_application_sent', { instrument: s.instrument }), ic('celebration', 'accent')); }
+      else if (act === "wait") { s.waitlist.push(myName); toast(t('app.slot_waitlist_joined', { instrument: s.instrument })); }
       else if (act === "withdraw") {
-        if (s.waitlist.length) { s.applicant = s.waitlist.shift(); toast(`Hai rinunciato: subentra ${s.applicant} dalla lista d'attesa.`); }
-        else { s.filled = false; s.applicant = null; toast("Hai rinunciato: lo slot è di nuovo libero."); }
+        if (s.waitlist.length) { s.applicant = s.waitlist.shift(); toast(t('app.slot_withdrew_next', { name: s.applicant })); }
+        else { s.filled = false; s.applicant = null; toast(t('app.slot_withdrew_free')); }
       }
       save(); openEventSheet(ev); renderBoard2();
     };
@@ -1482,34 +1623,34 @@ function renderBoard2() { if (currentView === "board") { const y = window.scroll
 
 function openCreateSheet() {
   openModal(`
-    <h2>Nuovo annuncio 📌</h2>
-    <p class="view-sub">Cerchi membri o organizzi una jam? Pubblica qui.</p>
-    <label class="field">Titolo</label><input type="text" id="evTitle" placeholder="Es. Cerchiamo bassista rock">
-    <label class="field" style="margin-top:10px">Nome band / organizzatore</label><input type="text" id="evAuthor" placeholder="Es. The Riffs" value="${esc(state.me.name)}">
+    <h2>${t('app.create_new_ad_title')}</h2>
+    <p class="view-sub">${t('app.create_sub')}</p>
+    <label class="field">${t('app.create_title_label')}</label><input type="text" id="evTitle" placeholder="${esc(t('app.create_title_ph'))}">
+    <label class="field" style="margin-top:10px">${t('app.create_author_label')}</label><input type="text" id="evAuthor" placeholder="${esc(t('app.create_author_ph'))}" value="${esc(state.me.name)}">
     <div class="filter-row" style="margin-top:10px">
-      <div><label class="field">Città</label><input type="text" id="evCity" value="${esc(state.me.city)}"></div>
-      <div><label class="field">Data</label><input type="date" id="evDate" aria-label="Data"></div>
+      <div><label class="field">${t('app.create_city')}</label><input type="text" id="evCity" value="${esc(state.me.city)}"></div>
+      <div><label class="field">${t('app.create_date')}</label><input type="date" id="evDate" aria-label="${esc(t('app.create_date'))}"></div>
     </div>
-    <label class="field" style="margin-top:10px">Generi</label><div class="chips" id="evGenres">${chips(GENRES, [])}</div>
-    <label class="field" style="margin-top:10px">Strumenti cercati (slot liberi)</label><div id="evSlots"></div>
-    <label class="field" style="margin-top:10px">Descrizione</label><textarea id="evDesc" placeholder="Dettagli, sala prove, orari…"></textarea>
-    <button class="btn" id="evCreate" style="margin-top:18px">Pubblica annuncio</button>`);
+    <label class="field" style="margin-top:10px">${t('app.create_genres')}</label><div class="chips" id="evGenres">${chips(GENRES, [], genreLabel)}</div>
+    <label class="field" style="margin-top:10px">${t('app.create_slots_label')}</label><div id="evSlots"></div>
+    <label class="field" style="margin-top:10px">${t('app.ev_description')}</label><textarea id="evDesc" placeholder="${esc(t('app.create_desc_ph'))}"></textarea>
+    <button class="btn" id="evCreate" style="margin-top:18px">${t('app.create_publish')}</button>`);
   const selGen = [], selSlots = [];
   document.querySelectorAll("#evGenres .chip").forEach(c => c.onclick = () => toggleChip(c, selGen));
-  instrumentPicker($("#evSlots"), selSlots, { placeholder: "Strumento cercato…" });
+  instrumentPicker($("#evSlots"), selSlots, { placeholder: t('app.create_slots_ph') });
   $("#evCreate").onclick = () => {
     const title = $("#evTitle").value.trim();
-    if (!title) return markFieldError("#evTitle", "Inserisci un titolo per l'annuncio.");
-    if (!selSlots.length) return toast("Seleziona almeno uno strumento cercato");
+    if (!title) return markFieldError("#evTitle", t('app.create_title_required'));
+    if (!selSlots.length) return toast(t('app.create_slot_required'));
     state.events.unshift({
-      id: "e" + Date.now(), title, author: $("#evAuthor").value.trim() || state.me.name || "Anonimo",
+      id: "e" + Date.now(), title, author: $("#evAuthor").value.trim() || state.me.name || t('app.create_anonymous'),
       authorAvatar: state.me.avatar, city: $("#evCity").value.trim() || "Milano", distanceKm: 0,
       date: $("#evDate").value || new Date().toISOString().slice(0, 10),
       genres: selGen, description: $("#evDesc").value.trim(),
       createdAt: Date.now(), featured: false,
       slots: selSlots.map(i => ({ instrument: i, filled: false, waitlist: [] }))
     });
-    save(); closeModal(); toast("Annuncio pubblicato!", ic('megaphone')); navigate("board");
+    save(); closeModal(); toast(t('app.create_published'), ic('megaphone')); navigate("board");
   };
 }
 
@@ -1528,7 +1669,13 @@ function dmContact(c) {
 function pushMsg(id, msg) {
   state.messages[id] = state.messages[id] || [];
   const m = Object.assign({ kind: "text", ts: Date.now(), delivered: true, read: msg.from === "me" }, msg);
-  state.messages[id].push(m); save(); return m; // BACKEND HOOK: POST /threads/:id/messages
+  state.messages[id].push(m); save();
+  if (isProductionRuntime() && msg.from === "me" && msg.kind !== "image") {
+    JM.Api.messages.send(id, msg.text || "").catch((error) =>
+      toast(error.message || "Messaggio non inviato", ic("alert-triangle"), { error: true })
+    );
+  }
+  return m;
 }
 function migrateMessages(out) {
   const base = Date.now() - 36 * 3600e3;
@@ -1545,7 +1692,7 @@ function markThreadRead(id) { let ch = false; (state.messages[id] || []).forEach
 function threadLast(id) { const t = state.messages[id] || []; return t[t.length - 1]; }
 function dayLabel(ts) {
   const d = new Date(ts), t = new Date(), sd = (a, b) => a.toDateString() === b.toDateString();
-  if (sd(d, t)) return "Oggi"; if (sd(d, new Date(t.getTime() - 86400e3))) return "Ieri";
+  if (sd(d, t)) return window.t('app.day_today'); if (sd(d, new Date(t.getTime() - 86400e3))) return window.t('app.day_yesterday');
   return formatDate(d.toISOString().slice(0, 10));
 }
 function hhmm(ts) { const d = new Date(ts); return ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2); }
@@ -1554,17 +1701,17 @@ function simReply(p) {
   const g = (typeof sharedGenres === "function") ? sharedGenres(p) : [];
   const so = (typeof sharedSongs === "function") ? sharedSongs(p) : [];
   const pool = [];
-  if (so.length) pool.push(`Bello! "${so[0].title}" è uno dei miei pezzi preferiti.`);
-  if (g.length) pool.push(`Anche io vado di ${g[0].toLowerCase()}, troviamo una data?`);
-  if ((p.instruments || [])[0]) pool.push(`Col ${p.instruments[0].toLowerCase()} ci divertiamo di sicuro. Quando provi di solito?`);
-  pool.push("Ci sto! Organizziamo una prova questa settimana?", "Volentieri, dimmi dove e quando.");
+  if (so.length) pool.push(t('app.sim_reply_song', { song: so[0].title }));
+  if (g.length) pool.push(t('app.sim_reply_genre', { genre: g[0].toLowerCase() }));
+  if ((p.instruments || [])[0]) pool.push(t('app.sim_reply_instrument', { instrument: p.instruments[0].toLowerCase() }));
+  pool.push(t('app.sim_reply_yes'), t('app.sim_reply_where_when'));
   return pool[hash(p.id + (state.messages[p.id] || []).length) % pool.length]; // BACKEND HOOK: messaggio reale dell'altro utente
 }
 
 function renderMessages(app) {
-  app.appendChild(el(`<div><h1 class="view-title">Messaggi</h1>
-    <p class="view-sub">Accordati senza scambiare il numero di telefono.</p>
-    <input type="text" id="msgSearch" placeholder="Cerca una conversazione…" autocomplete="off" style="margin-bottom:10px">
+  app.appendChild(el(`<div><h1 class="view-title">${t('app.chat_title')}</h1>
+    <p class="view-sub">${t('app.chat_sub')}</p>
+    <input type="text" id="msgSearch" placeholder="${esc(t('app.chat_search_ph'))}" autocomplete="off" style="margin-bottom:10px">
     <div id="threads"></div></div>`));
   const search = $("#msgSearch");
   const paint = () => {
@@ -1575,8 +1722,8 @@ function renderMessages(app) {
     if (q) ids = ids.filter(id => { const p = findContact(id), l = threadLast(id); return (p.name || "").toLowerCase().includes(q) || ((l && l.text) || "").toLowerCase().includes(q); });
     if (!ids.length) {
       box.innerHTML = q
-        ? `<div class="empty">Nessuna conversazione per “${esc(search.value)}”.<div class="disc-empty-actions"><button class="btn small secondary" id="clrThreadSearch" type="button">${ic('x')} Cancella ricerca</button></div></div>`
-        : `<div class="empty">${spot("trova")}Nessuna conversazione.<br>Fai un <b>match</b> in Scopri o scrivi a un autore in Feed/Bacheca.<div class="disc-empty-actions"><button class="btn small" id="emToDisc" type="button">${ic('match')} Vai a Scopri</button></div></div>`;
+        ? `<div class="empty">${t('app.chat_no_results', { query: esc(search.value) })}<div class="disc-empty-actions"><button class="btn small secondary" id="clrThreadSearch" type="button">${ic('x')} ${t('app.chat_clear_search')}</button></div></div>`
+        : `<div class="empty">${spot("trova")}${t('app.chat_empty')}<div class="disc-empty-actions"><button class="btn small" id="emToDisc" type="button">${ic('match')} ${t('app.chat_go_discover')}</button></div></div>`;
       const b = $("#emToDisc"); if (b) b.onclick = () => navigate("discover");
       const clr = $("#clrThreadSearch"); if (clr) clr.onclick = () => { search.value = ""; paint(); };
       return;
@@ -1584,7 +1731,7 @@ function renderMessages(app) {
     box.innerHTML = "";
     ids.forEach(id => {
       const p = findContact(id), last = threadLast(id), uc = unreadCount(id);
-      const prev = last ? (last.kind && last.kind !== "text" ? "Allegato" : esc((last.from === "me" ? "Tu: " : "") + last.text)) : "Avete fatto match — scrivi qualcosa.";
+      const prev = last ? (last.kind && last.kind !== "text" ? t('app.chat_attachment') : esc((last.from === "me" ? t('app.chat_you_prefix') : "") + last.text)) : t('app.chat_matched_say');
       const c = el(`<div class="card thread-row${uc ? " unread" : ""}"><div class="card-head">
         ${avatarTag(p)}
         <div class="meta" style="flex:1;min-width:0">
@@ -1605,59 +1752,99 @@ function openChat(p) {
     <div class="card-head chat-head modal-head" style="margin-bottom:12px">
       ${avatarTag(p)}
       <div class="meta" style="flex:1"><div class="name">${esc(p.name)}</div><div class="loc">${ic('map-pin')} ${esc(p.city || "")}${p.distanceKm != null ? " · " + p.distanceKm + " km" : ""}</div></div>
-      <button class="icon-btn" id="chatMenu" type="button" aria-label="Opzioni conversazione" title="Opzioni">${ic('sliders')}</button>
+      <button class="icon-btn" id="chatMenu" type="button" aria-label="${esc(t('app.chat_delete_conversation'))}" title="${esc(t('app.chat_delete_conversation'))}">${ic('trash')}</button>
     </div>
-    <div class="msg-thread" id="thread" role="log" aria-live="polite" aria-label="Conversazione"></div>
+    <div class="msg-thread" id="thread" role="log" aria-live="polite" aria-label="${esc(t('app.chat_conversation_label'))}"></div>
     <div class="quick-bar" id="quickBar">
-      <button class="quick-chip" type="button" data-q="Quando suoni di solito?">Quando suoni?</button>
-      <button class="quick-chip" type="button" data-q="jam">${ic('microphone')} Proponi una prova</button>
-      <button class="quick-chip" type="button" data-q="rep">${ic('music-note')} Manda repertorio</button>
+      <button class="quick-chip" type="button" data-q="${esc(t('app.chat_quick_when'))}">${t('app.chat_quick_when_short')}</button>
+      <button class="quick-chip" type="button" data-q="jam">${ic('microphone')} ${t('app.chat_quick_propose')}</button>
+      <button class="quick-chip" type="button" data-q="rep">${ic('music-note')} ${t('app.chat_quick_send_rep')}</button>
     </div>
-    <div class="composer"><input type="text" id="msgInput" aria-label="Scrivi un messaggio" placeholder="Scrivi un messaggio…" /><button class="btn small" id="sendMsg" aria-label="Invia">${ic('send')}</button></div>`);
+    <div class="emoji-bar" id="chatEmojiBar" hidden>${POST_EMOJIS.map(e => `<button type="button" data-e="${e}">${e}</button>`).join("")}</div>
+    <div class="composer"><button class="icon-btn" id="chatEmoji" type="button" aria-label="${esc(t('app.chat_emoji'))}" aria-expanded="false" title="${esc(t('app.chat_emoji'))}">${ic('face-neutral')}</button><button class="icon-btn" id="chatAttach" type="button" aria-label="${esc(t('app.chat_attach_image'))}" title="${esc(t('app.chat_attach_image'))}">${ic('camera')}</button><input type="text" id="msgInput" aria-label="${esc(t('app.chat_write_message'))}" placeholder="${esc(t('app.chat_write_message_ph'))}" /><button class="btn small" id="sendMsg" aria-label="${esc(t('app.chat_send'))}">${ic('send')}</button></div>`);
   paintThread(p);
-  const send = (text) => {
-    const v = (text != null ? text : $("#msgInput").value).trim(); if (!v) return;
-    pushMsg(p.id, { from: "me", text: v }); $("#msgInput").value = ""; paintThread(p); showTyping(p);
+  if (isProductionRuntime()) {
+    JM.Api.messages.with(p.id).then((rows) => {
+      state.messages[p.id] = rows.map((row) => ({
+        from: row.mine ? "me" : "them",
+        text: row.text || "",
+        img: row.image || "",
+        kind: row.image ? "image" : "text",
+        ts: new Date(row.ts).getTime(),
+        delivered: true,
+        read: true
+      }));
+      save();
+      if (document.querySelector("#thread")) paintThread(p);
+    }).catch(() => {});
+  }
+  // Risposta simulata del contatto (riusata da testo e immagine).
+  const botReply = () => {
+    if (isProductionRuntime()) return;
+    showTyping(p);
     setTimeout(() => {
       hideTyping(); pushMsg(p.id, { from: "them", text: simReply(p) });
       if (currentView === "messages" && document.querySelector("#thread")) { markThreadRead(p.id); paintThread(p); }
-      else notify("chat-bubble", `${p.name.split(" ")[0]} ti ha risposto.`, { view: "messages" });
+      else notify("chat-bubble", t('app.chat_replied', { name: p.name.split(" ")[0] }), { view: "messages" });
       updateChatDot();
     }, 1100 + (hash(p.id) % 700));
   };
+  const send = (text) => {
+    const v = (text != null ? text : $("#msgInput").value).trim(); if (!v) return;
+    pushMsg(p.id, { from: "me", text: v }); $("#msgInput").value = ""; paintThread(p); botReply();
+  };
   $("#sendMsg").onclick = () => send();
   $("#msgInput").addEventListener("keydown", e => { if (e.key === "Enter") send(); });
+  // Emoji nel composer (riusa il set dei post + insertAtCursor)
+  $("#chatEmoji").onclick = () => { const b = $("#chatEmojiBar"); b.hidden = !b.hidden; $("#chatEmoji").setAttribute("aria-expanded", b.hidden ? "false" : "true"); };
+  $("#chatEmojiBar").querySelectorAll("[data-e]").forEach(b => b.onclick = () => insertAtCursor($("#msgInput"), b.dataset.e));
+  // Allega immagine: stessa compressione dei post (pickImage → max 1000px, JPEG 0.8) salvata come bolla-immagine
+  $("#chatAttach").onclick = () => pickImage(async src => {
+    if (isProductionRuntime()) {
+      try {
+        const blob = await (await fetch(src)).blob();
+        const uploaded = await JM.Api.media.upload(blob);
+        await JM.Api.messages.send(p.id, "", uploaded.key);
+      } catch (error) {
+        return toast(error.message || "Immagine non inviata", ic("alert-triangle"), { error: true });
+      }
+    }
+    pushMsg(p.id, { from: "me", kind: "image", img: src });
+    paintThread(p);
+    botReply();
+  }, 1000);
   $("#quickBar").querySelectorAll("[data-q]").forEach(b => b.onclick = () => {
     const q = b.dataset.q;
     if (q === "jam") return proposeJam(p);
     if (q === "rep") return shareRepertoire(p);
     send(q);
   });
-  $("#chatMenu").onclick = () => openConfirm("Eliminare la conversazione?", "I messaggi con " + p.name.split(" ")[0] + " verranno rimossi.", { yes: "Elimina", danger: true }, () => {
-    state.matches = (state.matches || []).filter(id => id !== p.id); delete state.messages[p.id]; save(); closeModal(); navigate("messages"); toast("Conversazione eliminata");
+  $("#chatMenu").onclick = () => openConfirm(t('app.chat_delete_q'), t('app.chat_delete_body', { name: p.name.split(" ")[0] }), { yes: t('app.delete'), danger: true }, () => {
+    state.matches = (state.matches || []).filter(id => id !== p.id); delete state.messages[p.id]; save(); closeModal(); navigate("messages"); toast(t('app.chat_deleted'));
   });
 }
 function showTyping(p) { const t = $("#thread"); if (!t || $("#typing")) return; const d = el(`<div class="bubble them typing" id="typing"><span></span><span></span><span></span></div>`); t.appendChild(d); t.scrollTop = t.scrollHeight; }
 function hideTyping() { const d = $("#typing"); if (d) d.remove(); }
 function proposeJam(p) {
-  pushMsg(p.id, { from: "me", text: "Ti va di organizzare una prova?", kind: "jam-proposal", payload: { title: "Proposta di prova", hint: "Crea la jam in Bacheca e invita " + p.name.split(" ")[0] } });
+  pushMsg(p.id, { from: "me", text: t('app.jam_proposal_msg'), kind: "jam-proposal", payload: { title: t('app.jam_proposal_title'), hint: t('app.jam_proposal_hint', { name: p.name.split(" ")[0] }) } });
   paintThread(p); // BACKEND HOOK: la proposta diventerà una vera jam condivisa
 }
 function shareRepertoire(p) {
   const songs = (state.me.repertoire || []).slice().sort((a, b) => (b.featured ? 1 : 0) - (a.featured ? 1 : 0)).slice(0, 5).map(r => r.title);
-  if (!songs.length) return toast("Aggiungi brani al tuo repertorio dal Profilo");
-  pushMsg(p.id, { from: "me", text: "Ecco un po' del mio repertorio", kind: "repertoire", payload: { songs } });
+  if (!songs.length) return toast(t('app.rep_add_first'));
+  pushMsg(p.id, { from: "me", text: t('app.rep_share_msg'), kind: "repertoire", payload: { songs } });
   paintThread(p);
 }
 function renderMsgCard(m) {
-  if (m.kind === "jam-proposal") return `<div class="bubble ${m.from} msg-card"><div class="mc-head">${ic('microphone')} ${esc((m.payload && m.payload.title) || "Proposta di prova")}</div><div class="mc-body">${esc((m.payload && m.payload.hint) || "")}</div><button class="btn small" type="button" data-jamcta="1">${ic('calendar')} Apri Bacheca</button><span class="b-time">${hhmm(m.ts)}</span></div>`;
-  if (m.kind === "repertoire") { const songs = (m.payload && m.payload.songs) || []; return `<div class="bubble ${m.from} msg-card"><div class="mc-head">${ic('music-note')} Repertorio</div><div class="mc-body tags">${songs.map(s => `<span class="tag">${esc(s)}</span>`).join("")}</div><span class="b-time">${hhmm(m.ts)}</span></div>`; }
+  if (m.kind === "image") { const src = safeImg(m.img); const tick = m.from === "me" ? `<span class="b-ticks">✓</span>` : ""; return `<div class="bubble ${m.from} msg-img">${src ? `<img src="${esc(src)}" alt="${esc(t('app.msg_image_alt'))}" loading="lazy" decoding="async">` : `<div class="mc-body">${ic('alert-triangle')} ${t('app.msg_image_invalid')}</div>`}<span class="b-time">${hhmm(m.ts)}${tick}</span></div>`; }
+  if (m.kind === "jam-proposal") return `<div class="bubble ${m.from} msg-card"><div class="mc-head">${ic('microphone')} ${esc((m.payload && m.payload.title) || t('app.jam_proposal_title'))}</div><div class="mc-body">${esc((m.payload && m.payload.hint) || "")}</div><button class="btn small" type="button" data-jamcta="1">${ic('calendar')} ${t('app.msg_open_board')}</button><span class="b-time">${hhmm(m.ts)}</span></div>`;
+  if (m.kind === "repertoire") { const songs = (m.payload && m.payload.songs) || []; return `<div class="bubble ${m.from} msg-card"><div class="mc-head">${ic('music-note')} ${t('app.msg_repertoire')}</div><div class="mc-body tags">${songs.map(s => `<span class="tag">${esc(s)}</span>`).join("")}</div><span class="b-time">${hhmm(m.ts)}</span></div>`; }
   return `<div class="bubble ${m.from}">${esc(m.text || "")}</div>`;
 }
 function paintThread(p) {
   const t = $("#thread"); if (!t) return;
   const msgs = state.messages[p.id] || [];
-  if (!msgs.length) { t.innerHTML = `<div class="thread-empty">${spot("sintonia")}<div>Siete in contatto. Rompi il ghiaccio: proponi una prova o manda il tuo repertorio.</div></div>`; return; }
+  if (!msgs.length) { t.innerHTML = `<div class="thread-empty">${spot("sintonia")}<div>${window.t('app.thread_empty')}</div></div>`; return; }
   let html = "", lastDay = "";
   msgs.forEach(m => {
     const d = dayLabel(m.ts || Date.now());
@@ -1676,23 +1863,23 @@ function paintThread(p) {
 // ---------- Profilo: completezza, auto-save, export ----------
 function profileCompleteness(m) {
   const steps = [
-    { id: "photo", label: "Aggiungi una foto", done: !!m.photo, w: 15 },
-    { id: "instr", label: "Indica strumento e livello", done: (m.instruments || []).length >= 1, w: 15 },
-    { id: "genres", label: "Scegli almeno 3 generi", done: (m.genres || []).length >= 3, w: 10 },
-    { id: "bio", label: "Scrivi una bio (40+ caratteri)", done: (m.bio || "").trim().length >= 40, w: 15 },
-    { id: "rep", label: "Aggiungi almeno 3 brani", done: (m.repertoire || []).length >= 3, w: 20 },
-    { id: "links", label: "Aggiungi un link d'ascolto", done: Object.values(m.links || {}).some(v => v), w: 10 },
-    { id: "deep", label: "Completa il Profilo Accordato", done: !!(m.deep && m.deep.done), w: 15 }
+    { id: "photo", label: t('app.compl_photo'), done: !!m.photo, w: 15 },
+    { id: "instr", label: t('app.compl_instr'), done: (m.instruments || []).length >= 1, w: 15 },
+    { id: "genres", label: t('app.compl_genres'), done: (m.genres || []).length >= 3, w: 10 },
+    { id: "bio", label: t('app.compl_bio'), done: (m.bio || "").trim().length >= 40, w: 15 },
+    { id: "rep", label: t('app.compl_rep'), done: (m.repertoire || []).length >= 3, w: 20 },
+    { id: "links", label: t('app.compl_links'), done: Object.values(m.links || {}).some(v => v), w: 10 },
+    { id: "deep", label: t('app.compl_deep'), done: !!(m.deep && m.deep.done), w: 15 }
   ];
   const pct = steps.filter(s => s.done).reduce((a, s) => a + s.w, 0);
   return { pct, steps }; // BACKEND HOOK: stessa % come "profile strength" lato API
 }
 function completionCardHtml(m) {
   const c = profileCompleteness(m);
-  if (c.pct >= 100) return `<div class="card flat completion-card"><b>${ic('check', 'ok')} Profilo accordato al 100%</b><p class="view-sub" style="margin:6px 0 0">Sei trovabile al massimo. 🎶</p></div>`;
+  if (c.pct >= 100) return `<div class="card flat completion-card"><b>${ic('check', 'ok')} ${t('app.compl_100')}</b><p class="view-sub" style="margin:6px 0 0">${t('app.compl_100_sub')}</p></div>`;
   const missing = c.steps.filter(s => !s.done);
   return `<div class="card flat completion-card">
-    <div class="row-between"><b>${ic('sparkles')} Profilo accordato al ${c.pct}%</b><span class="view-sub" style="font-size:.78rem">${missing.length} passi</span></div>
+    <div class="row-between"><b>${ic('sparkles')} ${t('app.compl_at', { pct: c.pct })}</b><span class="view-sub" style="font-size:.78rem">${t('app.compl_steps_left', { count: missing.length })}</span></div>
     <div class="cmp-bar"><i style="width:${c.pct}%"></i></div>
     <div class="cmp-steps">${missing.map(s => `<button class="cmp-step" type="button" data-step="${s.id}">${ic('plus')} ${esc(s.label)} <span class="cmp-w">+${s.w}%</span></button>`).join("")}</div>
   </div>`;
@@ -1721,8 +1908,8 @@ function exportMyData() {
     const a = document.createElement("a"); a.href = url; a.download = "jammate-profilo.json";
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-    toast("Dati esportati", ic('save')); // BACKEND HOOK: export GDPR completo lato server
-  } catch (e) { toast("Export non riuscito"); }
+    toast(t('app.data_exported'), ic('save')); // BACKEND HOOK: export GDPR completo lato server
+  } catch (e) { toast(t('app.export_failed')); }
 }
 
 // ---------- Vista: Profilo ----------
@@ -1731,75 +1918,60 @@ function renderProfile(app) {
   app.appendChild(el(`
     <div>
       <div style="text-align:center;margin-bottom:8px">
-        <div class="avatar-wrap" id="meAvatar" title="Cambia foto">${avatarTag(m, true)}<span class="cam">${ic('camera')}</span></div>
-        <h1 class="view-title" style="margin-bottom:0">${esc(m.name || "Il mio profilo")}${verifiedBadge(m)}</h1>
-        <div class="loc">${ic('map-pin')} ${esc(m.city)} · ${esc(topLevel(m))}</div>
-        <div style="margin-top:8px"><span class="tag lvl">${jamBadge(m.jamCount).icon} ${m.jamCount || 0} jam suonate</span> <span class="view-sub" style="font-size:.78rem">${jamBadge(m.jamCount).tier}</span></div>
+        <div class="avatar-wrap" id="meAvatar" title="${esc(t('app.profile_change_photo'))}">${avatarTag(m, true)}<span class="cam">${ic('camera')}</span></div>
+        <h1 class="view-title" style="margin-bottom:0">${esc(m.name || t('app.profile_my_profile'))}${verifiedBadge(m)}</h1>
+        <div class="loc">${ic('map-pin')} ${esc(m.city)} · ${esc(levelLabel(topLevel(m)))}</div>
+        <div style="margin-top:8px"><span class="tag lvl">${jamBadge(m.jamCount).icon} ${t('app.profile_jams_played', { count: m.jamCount || 0 })}</span> <span class="view-sub" style="font-size:.78rem">${jamBadge(m.jamCount).tier}</span></div>
         <div style="margin-top:12px">${activitySummary(m)}</div>
-        <div style="margin-top:8px"><button class="chip" id="roleChip" type="button" title="Gestisci il tuo ruolo">${ic('resonance-profile')} ${esc(roleSummary(m))}</button></div>
-        <button class="btn small secondary" id="previewProfile" style="margin-top:12px">${ic('search')} Anteprima — come ti vedono</button>
+        <div style="margin-top:8px"><button class="chip" id="roleChip" type="button" title="${esc(t('app.profile_manage_role'))}">${ic('resonance-profile')} ${esc(roleSummary(m))}</button></div>
+        <button class="btn small secondary" id="previewProfile" style="margin-top:12px">${ic('search')} ${t('app.profile_preview')}</button>
       </div>
       <div id="completionCard">${completionCardHtml(m)}</div>
-      <div class="hub-grid">
-        <button class="hub-item" data-go="palco"><span>${ic('microphone')}</span><small>Palco</small></button>
-        <button class="hub-item" data-go="lessons"><span>${ic('graduation-cap')}</span><small>Lezioni</small></button>
-        <button class="hub-item" data-go="tools"><span>${ic('sliders')}</span><small>Strumenti</small></button>
-      </div>
+      ${hubGrid()}
       <div class="card flat">
-        <div class="row-between"><b>${ic("resonance-profile")} Profilo Accordato</b> ${state.me.deep.done ? '<span class="tag lvl">Completato</span>' : '<span class="badge-new">novità</span>'}</div>
-        <p class="view-sub" style="margin:8px 0 12px">Sondaggio opzionale (~4 min): valori da musicista + un test di personalità validato (Big Five). Sblocca la <b>Sintonia</b> con chi l'ha fatto. Ludico ma scientifico, niente diagnosi.</p>
+        <div class="row-between"><b>${ic("resonance-profile")} Profilo Accordato</b> ${state.me.deep.done ? `<span class="tag lvl">${t('app.profile_pa_completed')}</span>` : `<span class="badge-new">${t('app.profile_new_badge')}</span>`}</div>
+        <p class="view-sub" style="margin:8px 0 12px">${t('app.profile_pa_intro')}</p>
         ${state.me.deep.done
-          ? `<div class="filter-row"><button class="btn small" id="reviewDeep">${ic('list')} Rivedi i risultati</button><button class="btn small secondary" id="redoDeep">${ic('refresh')} Rifai il sondaggio</button></div>`
-          : `<button class="btn" id="startDeep">Inizia il Profilo Accordato</button>`}
+          ? `<div class="filter-row"><button class="btn small" id="reviewDeep">${ic('list')} ${t('app.profile_review_results')}</button><button class="btn small secondary" id="redoDeep">${ic('refresh')} ${t('app.profile_redo_survey')}</button></div>`
+          : `<button class="btn" id="startDeep">${t('app.profile_start_pa')}</button>`}
       </div>
-      <div class="hint">${ic('sparkles')} Il tuo <b>repertorio</b> ti rende trovabile e aumenta la compatibilità con chi conosce gli stessi brani. È la marcia in più di JamMate.</div>
-      <div class="section-label">Repertorio</div>
+      <div class="hint">${ic('sparkles')} ${t('app.profile_rep_hint')}</div>
+      <div class="section-label">${t('app.sheet_repertoire')}</div>
       <div class="card flat">
         <div class="add-rep">
-          <div><label class="field">Brano</label><input type="text" id="repTitle" placeholder="Es. Wonderwall"></div>
-          <div><label class="field">Artista</label><input type="text" id="repArtist" placeholder="Es. Oasis"></div>
+          <div><label class="field">${t('app.rep_song_label')}</label><input type="text" id="repTitle" placeholder="${esc(t('app.rep_song_ph'))}"></div>
+          <div><label class="field">${t('app.rep_artist_label')}</label><input type="text" id="repArtist" placeholder="${esc(t('app.rep_artist_ph'))}"></div>
         </div>
-        <label class="field" style="margin-top:10px">Tonalità che suoni <span class="view-sub" style="font-size:.76rem">· facoltativa, anche più d'una</span></label>
+        <label class="field" style="margin-top:10px">${t('app.rep_keys_label')} <span class="view-sub" style="font-size:.76rem">${t('app.rep_keys_optional')}</span></label>
         <div class="chips" id="repKeys">${chips(KEYS, [])}</div>
         <div class="row-between" style="margin-top:10px">
-          <label class="field" style="margin:0">Il tuo strumento</label>
-          <select id="repTrans" style="width:auto">${TRANSPOSERS.map((t, i) => `<option value="${i}">${esc(t.name)}</option>`).join("")}</select>
+          <label class="field" style="margin:0">${t('app.rep_your_instrument')}</label>
+          <select id="repTrans" style="width:auto">${TRANSPOSERS.map((tr, i) => `<option value="${i}">${esc(transposerLabel(tr))}</option>`).join("")}</select>
         </div>
         <div class="rep-concert" id="repConcert" hidden></div>
-        <button class="btn small" id="addRep" style="margin-top:12px">${ic('plus')} Aggiungi brano</button>
+        <button class="btn small" id="addRep" style="margin-top:12px">${ic('plus')} ${t('app.rep_add_song')}</button>
       </div>
       <div id="myRep"></div>
-      <div class="section-label">Frase a effetto</div>
-      <input type="text" id="myTag" placeholder="Es. Riff e groove a volontà" value="${esc(m.tagline)}">
-      <div class="section-label">Strumenti & livello</div>
+      <div class="section-label">${t('app.profile_tagline_label')}</div>
+      <input type="text" id="myTag" placeholder="${esc(t('app.profile_tagline_ph'))}" value="${esc(m.tagline)}">
+      <div class="section-label">${t('app.profile_instr_level')}</div>
       <div id="myIns"></div>
       <div id="myLevels" style="margin-top:10px"></div>
-      <div class="section-label">Generi</div><div class="chips" id="myGen">${chips(GENRES, m.genres)}</div>
-      <div class="section-label">Bio</div><textarea id="myBio" placeholder="Racconta chi sei e cosa cerchi…">${esc(m.bio)}</textarea>
-      <div class="section-label">Link (per farti ascoltare)</div>
-      <input type="text" id="lkYt" placeholder="Link YouTube" value="${esc(m.links.youtube)}" style="margin-bottom:8px">
-      <input type="text" id="lkSp" placeholder="Link Spotify" value="${esc(m.links.spotify)}" style="margin-bottom:8px">
-      <input type="text" id="lkIg" placeholder="Link Instagram" value="${esc(m.links.instagram)}">
-      <button class="btn" id="saveProfile" style="margin-top:20px">Salva profilo</button>
-      <div class="section-label">Ruolo e premium${(!state.guide || !state.guide.seen) ? ` <span class="badge-new">novità</span>` : ""}</div>
+      <div class="section-label">${t('app.profile_genres')}</div><div class="chips" id="myGen">${chips(GENRES, m.genres, genreLabel)}</div>
+      <div class="section-label">${t('app.profile_bio')}</div><textarea id="myBio" placeholder="${esc(t('app.profile_bio_ph'))}">${esc(m.bio)}</textarea>
+      <div class="section-label">${t('app.profile_links_label')}</div>
+      <input type="text" id="lkYt" placeholder="${esc(t('app.profile_link_yt'))}" value="${esc(m.links.youtube)}" style="margin-bottom:8px">
+      <input type="text" id="lkSp" placeholder="${esc(t('app.profile_link_sp'))}" value="${esc(m.links.spotify)}" style="margin-bottom:8px">
+      <input type="text" id="lkIg" placeholder="${esc(t('app.profile_link_ig'))}" value="${esc(m.links.instagram)}">
+      <button class="btn" id="saveProfile" style="margin-top:20px">${t('app.profile_save')}</button>
+      <div class="section-label">${t('app.profile_role_premium')}${(!state.guide || !state.guide.seen) ? ` <span class="badge-new">${t('app.profile_new_badge')}</span>` : ""}</div>
       <div class="card flat">
-        <label class="set-row"><span>🎸 Suono <span class="view-sub" style="font-size:.74rem">· musicista: match, repertorio, Sintonia</span></span><input type="checkbox" id="capPlays" ${m.caps && m.caps.plays ? "checked" : ""}></label>
-        <label class="set-row"><span>🎤 Ingaggio / organizzo <span class="view-sub" style="font-size:.74rem">· pubblica richieste, prenota band, serate</span></span><input type="checkbox" id="capHires" ${m.caps && m.caps.hires ? "checked" : ""}></label>
-        <p class="view-sub" style="font-size:.74rem;margin:6px 0 0">Senza nessuna delle due resti <b>ascoltatore</b>: segui artisti e scopri serate. Crei un <b>Locale</b> o una <b>Band</b> da Palco.</p>
+        <label class="set-row"><span>${t('app.profile_cap_plays')} <span class="view-sub" style="font-size:.74rem">${t('app.profile_cap_plays_sub')}</span></span><input type="checkbox" id="capPlays" ${m.caps && m.caps.plays ? "checked" : ""}></label>
+        <label class="set-row"><span>${t('app.profile_cap_hires')} <span class="view-sub" style="font-size:.74rem">${t('app.profile_cap_hires_sub')}</span></span><input type="checkbox" id="capHires" ${m.caps && m.caps.hires ? "checked" : ""}></label>
+        <p class="view-sub" style="font-size:.74rem;margin:6px 0 0">${t('app.profile_role_note')}</p>
       </div>
-      <div class="hub-list" style="margin-top:10px">
-        <button class="hub-row" id="hubPages"><span>${ic('building')} Le tue Pagine${typeof pagesCount === "function" && pagesCount() ? " · " + pagesCount() : ""}</span><span class="hub-chev">›</span></button>
-        <button class="hub-row" id="hubPro"><span>${ic('resonance-profile', 'grad')} JamMate Pro${m.plan === "pro" ? " · attivo" : ""}</span><span class="hub-chev">›</span></button>
-        <button class="hub-row" id="hubVerify"><span>${ic('check')} ${m.verifyStatus === "verified" ? "Profilo verificato" : (m.verifyStatus === "pending" ? "Verifica in corso…" : "Verifica il profilo")}</span><span class="hub-chev">›</span></button>
-        <button class="hub-row" id="hubBoost"><span>${ic('sparkles')} Metti in evidenza</span><span class="hub-chev">›</span></button>
-      </div>
-      <div class="section-label">Account & supporto</div>
-      <div class="hub-list">
-        <button class="hub-row" id="hubSettings"><span>${ic('gear')} Impostazioni</span><span class="hub-chev">›</span></button>
-        <button class="hub-row" id="hubHelp"><span>${ic('info')} Aiuto &amp; supporto</span><span class="hub-chev">›</span></button>
-        <button class="hub-row" id="hubReport"><span>${ic('flag')} Segnala un problema</span><span class="hub-chev">›</span></button>
-      </div>
-      <p class="view-sub" style="text-align:center;margin-top:18px;opacity:.55">JamMate · prototipo v0.1.0 🎸</p>
+      ${menuRows('hub')}
+      <p class="view-sub" style="text-align:center;margin-top:18px;opacity:.55">${t('app.profile_proto_version')}</p>
     </div>`));
   paintMyRep();
   $("#meAvatar").onclick = pickPhoto;
@@ -1814,30 +1986,30 @@ function renderProfile(app) {
     const semi = TRANSPOSERS[+repTrans.value].semi, box = $("#repConcert");
     if (!repSelKeys.length || !semi) { box.hidden = true; box.textContent = ""; return; }
     const concert = repSelKeys.map(k => concertKey(k, semi)).filter(Boolean);
-    box.hidden = false; box.innerHTML = `🎹 Tonalità reale (piano): <b>${esc(concert.join(", "))}</b>`;
+    box.hidden = false; box.innerHTML = t('app.rep_real_key', { keys: esc(concert.join(", ")) });
   };
   app.querySelectorAll("#repKeys .chip").forEach(c => c.onclick = () => { toggleChip(c, repSelKeys); updateConcert(); });
   repTrans.onchange = updateConcert;
   $("#addRep").onclick = () => {
-    const title = $("#repTitle").value.trim(); if (!title) return markFieldError("#repTitle", "Scrivi il titolo del brano.");
+    const title = $("#repTitle").value.trim(); if (!title) return markFieldError("#repTitle", t('app.rep_title_required'));
     const artist = $("#repArtist").value.trim();
-    if (m.repertoire.some(r => songKey(r) === songKey({ title, artist }))) return toast("Brano già in repertorio");
+    if (m.repertoire.some(r => songKey(r) === songKey({ title, artist }))) return toast(t('app.rep_already_in'));
     const semi = TRANSPOSERS[+repTrans.value].semi;
     m.repertoire.push({ title, artist, keys: repSelKeys.slice(), transpose: semi });
     save(); $("#repTitle").value = ""; $("#repArtist").value = "";
     repSelKeys.length = 0; app.querySelectorAll("#repKeys .chip.on").forEach(c => c.classList.remove("on")); updateConcert();
-    paintMyRep(); refreshCompletion(); toast("Brano aggiunto", ic('music-note'));
+    paintMyRep(); refreshCompletion(); toast(t('app.rep_song_added'), ic('music-note'));
   };
   // Strumenti: campo a ricerca con tag + "Altro" (al posto dei chip fissi).
-  instrumentPicker($("#myIns"), m.instruments, { onChange: () => { syncLevels(); paintMyLevels(); m.level = topLevel(m); save(); }, placeholder: "Cerca uno strumento (es. Sax tenore)…" });
+  instrumentPicker($("#myIns"), m.instruments, { onChange: () => { syncLevels(); paintMyLevels(); m.level = topLevel(m); save(); }, placeholder: t('app.ob_search_instrument_ph') });
   app.querySelectorAll("#myGen .chip").forEach(c => c.onclick = () => { toggleChip(c, m.genres); save(); refreshCompletion(); });
   syncLevels(); paintMyLevels();
   $("#saveProfile").onclick = () => {
-    saveMeFields(); m.level = topLevel(m); save(); refreshCompletion(); toast("Profilo salvato", ic('check', 'ok'));
+    saveMeFields(); m.level = topLevel(m); save(); refreshCompletion(); toast(t('app.profile_saved'), ic('check', 'ok'));
   };
   app.querySelectorAll(".hub-item").forEach(b => b.onclick = () => navigate(b.dataset.go));
-  if ($("#capPlays")) $("#capPlays").onchange = (e) => { m.caps.plays = e.target.checked; save(); toast(e.target.checked ? "Profilo musicista attivo" : "Modalità ascoltatore", ic("check", "ok")); };
-  if ($("#capHires")) $("#capHires").onchange = (e) => { m.caps.hires = e.target.checked; save(); toast(e.target.checked ? "Puoi ingaggiare e organizzare" : "Aggiornato", ic("check", "ok")); };
+  if ($("#capPlays")) $("#capPlays").onchange = (e) => { m.caps.plays = e.target.checked; save(); toast(e.target.checked ? t('app.disc_musician_active') : t('app.role_listener_mode'), ic("check", "ok")); };
+  if ($("#capHires")) $("#capHires").onchange = (e) => { m.caps.hires = e.target.checked; save(); toast(e.target.checked ? t('app.role_can_hire') : t('app.updated'), ic("check", "ok")); };
   if ($("#roleChip")) $("#roleChip").onclick = () => { const t = $("#capPlays"); if (t) { (t.closest(".card") || t).scrollIntoView({ behavior: "smooth", block: "center" }); try { t.focus(); } catch (_) {} } };
   if ($("#hubPages")) $("#hubPages").onclick = () => { if (typeof openPages === "function") openPages(); };
   if ($("#hubPro")) $("#hubPro").onclick = openPro;
@@ -1872,17 +2044,17 @@ function syncLevels() {
 // Una riga "strumento → livello" per ogni strumento selezionato.
 function paintMyLevels() {
   const box = $("#myLevels"); if (!box) return;
-  if (!state.me.instruments.length) { box.innerHTML = `<p class="view-sub">Seleziona uno strumento qui sopra per impostarne il livello.</p>`; return; }
+  if (!state.me.instruments.length) { box.innerHTML = `<p class="view-sub">${t('app.ob_pick_instrument_hint')}</p>`; return; }
   box.innerHTML = "";
   state.me.instruments.forEach(inst => {
-    const row = el(`<div class="lvl-row"><span class="lvl-inst">${esc(inst)}</span><select>${options(LEVELS, state.me.levels[inst] || LEVELS[2])}</select></div>`);
+    const row = el(`<div class="lvl-row"><span class="lvl-inst">${esc(vocabLabel(inst))}</span><select>${options(LEVELS, state.me.levels[inst] || LEVELS[2], null, levelLabel)}</select></div>`);
     row.querySelector("select").onchange = e => { state.me.levels[inst] = e.target.value; state.me.level = topLevel(state.me); save(); };
     box.appendChild(row);
   });
 }
 function paintMyRep() {
   const box = $("#myRep"); if (!box) return;
-  if (!state.me.repertoire.length) return box.innerHTML = `<p class="view-sub">Nessun brano ancora. Aggiungine uno qui sopra.</p>`;
+  if (!state.me.repertoire.length) return box.innerHTML = `<p class="view-sub">${t('app.rep_none_yet')}</p>`;
   box.innerHTML = "";
   const featCount = state.me.repertoire.filter(r => r.featured).length;
   // I "cavalli di battaglia" (in evidenza) vanno in cima.
@@ -1891,15 +2063,15 @@ function paintMyRep() {
     const written = repWrittenKeys(r), concert = repConcertKeys(r);
     const showC = (r.transpose || 0) && concert.length && concert.join() !== written.join();
     const keyHtml = written.length
-      ? `<span class="key-badge">${esc(written.join(", "))}</span>${showC ? `<span class="key-badge concert" title="Tonalità reale (piano)">🎹 ${esc(concert.join(", "))}</span>` : ""}`
+      ? `<span class="key-badge">${esc(written.join(", "))}</span>${showC ? `<span class="key-badge concert" title="${esc(t('app.rep_real_key_title'))}">🎹 ${esc(concert.join(", "))}</span>` : ""}`
       : `<span class="key-badge muted">—</span>`;
     const row = el(`<div class="rep-item${r.featured ? " featured" : ""}"><div><div class="song">${esc(r.title)}</div><div class="artist">${esc(r.artist || "")}</div></div>
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end">${keyHtml}
-        <button class="rep-star${r.featured ? " on" : ""}" data-feat="1" aria-label="${r.featured ? "Togli dai cavalli di battaglia" : "Metti in evidenza"}" title="In evidenza">${ic('star')}</button>
-        <button class="rep-del" data-del="1" aria-label="Rimuovi brano">${ic('x')}</button></div></div>`);
+        <button class="rep-star${r.featured ? " on" : ""}" data-feat="1" aria-label="${esc(r.featured ? t('app.rep_unstar') : t('app.rep_star'))}" title="${esc(t('app.rep_featured_title'))}">${ic('star')}</button>
+        <button class="rep-del" data-del="1" aria-label="${esc(t('app.rep_remove_song'))}">${ic('x')}</button></div></div>`);
     row.querySelector("[data-del]").onclick = () => { state.me.repertoire.splice(i, 1); save(); paintMyRep(); };
     row.querySelector("[data-feat]").onclick = () => {
-      if (!r.featured && featCount >= 3) return toast("Massimo 3 brani in evidenza");
+      if (!r.featured && featCount >= 3) return toast(t('app.rep_max_featured'));
       r.featured = !r.featured; save(); haptic("Light"); paintMyRep();
     };
     box.appendChild(row);
@@ -1925,8 +2097,8 @@ function hydrateTools() {
 function persistTuner() { state.tools = state.tools || {}; state.tools.tuner = { a4: tuner.a4, tuningId: state.me.tuningId }; save(); }
 // Etichetta agogica italiana dal BPM.
 function tempoLabel(bpm) {
-  if (bpm < 60) return "Largo"; if (bpm < 76) return "Adagio"; if (bpm < 108) return "Andante";
-  if (bpm < 120) return "Moderato"; if (bpm < 156) return "Allegro"; if (bpm < 176) return "Vivace"; return "Presto";
+  if (bpm < 60) return t('app.tempo_largo'); if (bpm < 76) return t('app.tempo_adagio'); if (bpm < 108) return t('app.tempo_andante');
+  if (bpm < 120) return t('app.tempo_moderato'); if (bpm < 156) return t('app.tempo_allegro'); if (bpm < 176) return t('app.tempo_vivace'); return t('app.tempo_presto');
 }
 // Brani del repertorio con un BPM impostato (ponte metronomo↔repertorio).
 function songsWithBpm() { return (state.me.repertoire || []).map((r, i) => ({ r, i })).filter(x => x.r.bpm); }
@@ -1940,11 +2112,11 @@ function renderTools(app) {
   hydrateTools();
   app.appendChild(el(`
     <div>
-      <h1 class="view-title">Cassetta degli attrezzi ${ic('sliders', 'accent')}</h1>
-      <p class="view-sub">Metronomo e accordatore integrati: tutto sul leggio.</p>
+      <h1 class="view-title">${t('app.tools_title')} ${ic('sliders', 'accent')}</h1>
+      <p class="view-sub">${t('app.tools_sub')}</p>
       <div class="segmented" id="toolTabs">
-        <button id="tMetro" class="on">${ic('clock')} Metronomo</button>
-        <button id="tTuner">${ic('music-note')} Accordatore</button>
+        <button id="tMetro" class="on">${ic('clock')} ${t('app.tools_metronome')}</button>
+        <button id="tTuner">${ic('music-note')} ${t('app.tools_tuner')}</button>
       </div>
       <div id="toolBody"></div>
     </div>`));
@@ -1990,33 +2162,33 @@ function renderMetronome(box) {
     <div class="tool-card">
       <div class="bpm-display"><span id="bpmVal">${metro.bpm}</span><br><small>BPM · <span id="tempoLbl">${tempoLabel(metro.bpm)}</span></small></div>
       <div class="beat-dots" id="beatDots" aria-hidden="true"></div>
-      <input type="range" id="bpmRange" min="40" max="240" value="${metro.bpm}" aria-label="Battiti per minuto">
+      <input type="range" id="bpmRange" min="40" max="240" value="${metro.bpm}" aria-label="${esc(t('app.metro_bpm_aria'))}">
       <div class="bpm-controls">
-        <button id="bpmMinus" aria-label="Diminuisci BPM">−</button>
-        <button class="btn" id="metroToggle">${metro.playing ? "⏸ Stop" : "▶ Avvia"}</button>
-        <button id="bpmPlus" aria-label="Aumenta BPM">+</button>
+        <button id="bpmMinus" aria-label="${esc(t('app.metro_decrease_bpm'))}">−</button>
+        <button class="btn" id="metroToggle">${metro.playing ? t('app.metro_stop') : t('app.metro_start')}</button>
+        <button id="bpmPlus" aria-label="${esc(t('app.metro_increase_bpm'))}">+</button>
       </div>
       <div class="row-between" style="margin-top:6px">
-        <button class="btn secondary small" id="tapTempo">${ic('clock')} Tap tempo</button>
-        <select id="beatsSel" style="width:auto" aria-label="Metro">
-          <optgroup label="Semplici">${METERS.filter(m => !m.compound).map(m => `<option value="${m.id}"${m.id === metro.meterId ? " selected" : ""}>${m.id}</option>`).join("")}</optgroup>
-          <optgroup label="Composti">${METERS.filter(m => m.compound).map(m => `<option value="${m.id}"${m.id === metro.meterId ? " selected" : ""}>${m.id}</option>`).join("")}</optgroup>
+        <button class="btn secondary small" id="tapTempo">${ic('clock')} ${t('app.metro_tap_tempo')}</button>
+        <select id="beatsSel" style="width:auto" aria-label="${esc(t('app.metro_meter_aria'))}">
+          <optgroup label="${esc(t('app.metro_simple'))}">${METERS.filter(m => !m.compound).map(m => `<option value="${m.id}"${m.id === metro.meterId ? " selected" : ""}>${m.id}</option>`).join("")}</optgroup>
+          <optgroup label="${esc(t('app.metro_compound'))}">${METERS.filter(m => m.compound).map(m => `<option value="${m.id}"${m.id === metro.meterId ? " selected" : ""}>${m.id}</option>`).join("")}</optgroup>
         </select>
-        <select id="soundSel" style="width:auto" aria-label="Timbro del click">
+        <select id="soundSel" style="width:auto" aria-label="${esc(t('app.metro_click_timbre'))}">
           ${Object.entries(METRO_SOUNDS).map(([k, s]) => `<option value="${k}"${k === metro.sound ? " selected" : ""}>${esc(s.name)}</option>`).join("")}
         </select>
       </div>
-      <label class="metro-accent"><input type="checkbox" id="accentTgl"${metro.accentDownbeat ? " checked" : ""}> Accento sul primo movimento <span class="view-sub" style="font-size:.76rem">(togli per click tutti uguali)</span></label>
-      ${songs.length ? `<div class="section-label" style="margin-top:14px">${ic('music-note')} Dal tuo repertorio</div>
+      <label class="metro-accent"><input type="checkbox" id="accentTgl"${metro.accentDownbeat ? " checked" : ""}> ${t('app.metro_accent')} <span class="view-sub" style="font-size:.76rem">${t('app.metro_accent_sub')}</span></label>
+      ${songs.length ? `<div class="section-label" style="margin-top:14px">${ic('music-note')} ${t('app.metro_from_repertoire')}</div>
         <div class="song-chips" id="songChips">${songs.map(x => `<button class="song-chip" type="button" data-song="${x.i}">${esc(x.r.title)} · ${x.r.bpm}</button>`).join("")}</div>` : ""}
-      <div class="section-label" style="margin-top:14px">Preset</div>
+      <div class="section-label" style="margin-top:14px">${t('app.metro_preset')}</div>
       ${presets.length ? `<div class="filter-row">
-        <select id="presetSel" style="flex:1" aria-label="I tuoi preset">
-          <option value="">— I tuoi preset —</option>
+        <select id="presetSel" style="flex:1" aria-label="${esc(t('app.metro_your_presets_aria'))}">
+          <option value="">${t('app.metro_your_presets_opt')}</option>
           ${presets.map((p, i) => `<option value="${i}">${esc(p.name)} · ${p.bpm} BPM · ${esc(p.meterId || (p.beats ? p.beats + "/4" : "4/4"))}</option>`).join("")}
         </select>
-        <button class="btn small" id="savePreset">${ic('save')} Salva</button>
-      </div>` : `<div class="empty" style="padding:18px">${illus("quiet")}Nessun preset.<br>Salva BPM e metro dei tuoi brani per averli sempre pronti.<button class="btn small" id="savePreset" style="margin-top:10px">${ic('save')} Salva il primo preset</button></div>`}
+        <button class="btn small" id="savePreset">${ic('save')} ${t('app.metro_save')}</button>
+      </div>` : `<div class="empty" style="padding:18px">${illus("quiet")}${t('app.metro_no_presets')}<button class="btn small" id="savePreset" style="margin-top:10px">${ic('save')} ${t('app.metro_save_first_preset')}</button></div>`}
       <div id="presetActions"></div>
     </div>`));
   drawBeatDots();
@@ -2033,7 +2205,7 @@ function renderMetronome(box) {
   const chips = $("#songChips");
   if (chips) chips.querySelectorAll("[data-song]").forEach(b => b.onclick = () => {
     const r = state.me.repertoire[+b.dataset.song]; if (!r) return;
-    applyMetroFromSong(r); haptic("Light"); renderMetronome(box); toast(`Metronomo su “${r.title}”`, ic('music-note', 'accent'));
+    applyMetroFromSong(r); haptic("Light"); renderMetronome(box); toast(t('app.metro_on_song', { song: r.title }), ic('music-note', 'accent'));
   });
   const ps = $("#presetSel");
   if (ps) ps.onchange = e => {
@@ -2041,33 +2213,33 @@ function renderMetronome(box) {
     if (i === "") return;
     const p = (state.metroPresets || [])[+i]; if (!p) return;
     const row = el(`<div class="filter-row" style="margin-top:8px">
-      <button class="btn small" id="loadPreset">▶ Carica “${esc(p.name)}”</button>
-      <button class="btn small secondary" id="delPreset">${ic('x')} Elimina</button></div>`);
+      <button class="btn small" id="loadPreset">${t('app.metro_load_preset', { name: esc(p.name) })}</button>
+      <button class="btn small secondary" id="delPreset">${ic('x')} ${t('app.metro_delete')}</button></div>`);
     acts.appendChild(row);
     $("#loadPreset").onclick = () => loadMetroPreset(+i, box);
-    $("#delPreset").onclick = () => openConfirm("Eliminare il preset?", `“${p.name}” verrà rimosso.`, { yes: "Elimina", danger: true }, () => {
-      state.metroPresets.splice(+i, 1); save(); toast("Preset eliminato"); renderMetronome(box);
+    $("#delPreset").onclick = () => openConfirm(t('app.metro_delete_preset_q'), t('app.metro_delete_preset_body', { name: p.name }), { yes: t('app.metro_delete'), danger: true }, () => {
+      state.metroPresets.splice(+i, 1); save(); toast(t('app.metro_preset_deleted')); renderMetronome(box);
     });
   };
 }
 // Salva BPM + metro + suono come preset (bottom-sheet, niente più prompt nativo).
 function saveMetroPreset(box) {
   const songs = state.me.repertoire || [];
-  openModal(`<h2 style="margin-top:0">${ic('save')} Salva preset</h2>
-    <p class="view-sub">Salvi: <b>${metro.bpm} BPM</b> · ${esc(metro.meterId)} · ${esc((METRO_SOUNDS[metro.sound] || {}).name || metro.sound)}</p>
-    <label class="field">Nome</label>
-    <input type="text" id="presetName" value="Brano ${(state.metroPresets || []).length + 1}" autocomplete="off">
-    ${songs.length ? `<label class="field" style="margin-top:10px">Collega a un brano (opzionale)</label>
-      <select id="presetSong"><option value="">— nessuno —</option>${songs.map((r, i) => `<option value="${i}">${esc(r.title)}</option>`).join("")}</select>` : ""}
-    <button class="btn" id="presetSave" style="margin-top:16px">Salva preset</button>`);
+  openModal(`<h2 style="margin-top:0">${ic('save')} ${t('app.metro_save_preset_title')}</h2>
+    <p class="view-sub">${t('app.metro_save_preset_summary', { bpm: metro.bpm, meter: esc(metro.meterId), sound: esc((METRO_SOUNDS[metro.sound] || {}).name || metro.sound) })}</p>
+    <label class="field">${t('app.metro_name_label')}</label>
+    <input type="text" id="presetName" value="${esc(t('app.metro_default_preset_name', { n: (state.metroPresets || []).length + 1 }))}" autocomplete="off">
+    ${songs.length ? `<label class="field" style="margin-top:10px">${t('app.metro_link_song')}</label>
+      <select id="presetSong"><option value="">${t('app.metro_link_none')}</option>${songs.map((r, i) => `<option value="${i}">${esc(r.title)}</option>`).join("")}</select>` : ""}
+    <button class="btn" id="presetSave" style="margin-top:16px">${t('app.metro_save_preset_btn')}</button>`);
   const inp = $("#presetName");
   const doSave = () => {
-    const name = (inp.value || "").trim(); if (!name) return markFieldError(inp, "Dai un nome al preset.");
+    const name = (inp.value || "").trim(); if (!name) return markFieldError(inp, t('app.metro_name_required'));
     const songSel = $("#presetSong"); const li = (songSel && songSel.value !== "") ? +songSel.value : null;
     state.metroPresets = state.metroPresets || [];
     state.metroPresets.push({ name, bpm: metro.bpm, meterId: metro.meterId, accentDownbeat: metro.accentDownbeat, sound: metro.sound, linkSongIdx: li });
     if (li != null && state.me.repertoire[li]) { state.me.repertoire[li].bpm = metro.bpm; state.me.repertoire[li].meterId = metro.meterId; } // ponte: BPM sul brano
-    save(); closeModal(); toast("Preset salvato", ic('save')); renderMetronome(box);
+    save(); closeModal(); toast(t('app.metro_preset_saved'), ic('save')); renderMetronome(box);
   };
   $("#presetSave").onclick = doSave;
   inp.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); doSave(); } });
@@ -2080,7 +2252,7 @@ function loadMetroPreset(i, box) {
   metro.meterId = p.meterId || (p.beats ? p.beats + "/4" : "4/4");
   metro.accentDownbeat = p.accentDownbeat !== false;
   metro.sound = p.sound || "beep"; metro.current = 0;
-  renderMetronome(box); toast(`Caricato “${p.name}”`);
+  renderMetronome(box); toast(t('app.metro_preset_loaded', { name: p.name }));
   if (wasPlaying) toggleMetronome();
 }
 // Breve anteprima udibile del timbro scelto.
@@ -2100,12 +2272,12 @@ function toggleMetronome() {
   if (metro.playing) return stopMetronome(true);
   ensureCtx(); metro.playing = true; metro.current = 0; metro.nextTime = metro.ctx.currentTime + 0.05;
   metro.timer = setInterval(metroScheduler, 25);
-  const b = $("#metroToggle"); if (b) b.textContent = "⏸ Stop";
+  const b = $("#metroToggle"); if (b) b.textContent = t('app.metro_stop');
 }
 function stopMetronome(updateBtn) {
   metro.playing = false; if (metro.timer) clearInterval(metro.timer); metro.timer = null;
   document.querySelectorAll("#beatDots i").forEach(i => i.classList.remove("on"));
-  if (updateBtn) { const b = $("#metroToggle"); if (b) b.textContent = "▶ Avvia"; }
+  if (updateBtn) { const b = $("#metroToggle"); if (b) b.textContent = t('app.metro_start'); }
 }
 function metroScheduler() {
   if (!metro.playing) return;
@@ -2151,22 +2323,26 @@ const GUITAR = [["Mi", 82.41], ["La", 110.0], ["Re", 146.83], ["Sol", 196.0], ["
 // Strumenti traspositori (#13): semitoni da aggiungere alla nota reale per ottenere
 // la nota LETTA dallo strumentista (es. Si♭ legge un tono sopra il suono reale).
 const TRANSPOSERS = [
-  { name: "Do — non traspositore", semi: 0 },
-  { name: "Si♭ — tromba, clarinetto, sax tenore", semi: 2 },
-  { name: "Mi♭ — sax contralto / baritono", semi: 9 },
-  { name: "Fa — corno francese", semi: 7 }
+  { name: "Do — non traspositore", key: "app.trans_c", semi: 0 },
+  { name: "Si♭ — tromba, clarinetto, sax tenore", key: "app.trans_bb", semi: 2 },
+  { name: "Mi♭ — sax contralto / baritono", key: "app.trans_eb", semi: 9 },
+  { name: "Fa — corno francese", key: "app.trans_f", semi: 7 }
 ];
+// Localized transposer label (the .name field is the Italian source; the catalog key drives the rest).
+function transposerLabel(tr) { return (tr && tr.key) ? t(tr.key) : (tr ? tr.name : ""); }
 function noteName(midi) { const n = ((midi % 12) + 12) % 12; return NOTE_IT[n] + (Math.floor(midi / 12) - 1); }
 // Accordature di riferimento per famiglia di strumento (#2 multi-strumento).
 const TUNINGS = {
-  "Chitarra": { label: "Chitarra · Standard", tones: [["Mi", 82.41, "6ª"], ["La", 110.0, "5ª"], ["Re", 146.83, "4ª"], ["Sol", 196.0, "3ª"], ["Si", 246.94, "2ª"], ["Mi", 329.63, "1ª"]] },
-  "ChitarraDropD": { label: "Chitarra · Drop D", tones: [["Re", 73.42, "6ª"], ["La", 110.0, "5ª"], ["Re", 146.83, "4ª"], ["Sol", 196.0, "3ª"], ["Si", 246.94, "2ª"], ["Mi", 329.63, "1ª"]] },
-  "Basso": { label: "Basso · 4 corde", tones: [["Mi", 41.20, "4ª"], ["La", 55.0, "3ª"], ["Re", 73.42, "2ª"], ["Sol", 98.0, "1ª"]] },
-  "Basso5": { label: "Basso · 5 corde", tones: [["Si", 30.87, "5ª"], ["Mi", 41.20, "4ª"], ["La", 55.0, "3ª"], ["Re", 73.42, "2ª"], ["Sol", 98.0, "1ª"]] },
-  "Violino": { label: "Violino", tones: [["Sol", 196.0, ""], ["Re", 293.66, ""], ["La", 440.0, ""], ["Mi", 659.26, ""]] },
-  "Violoncello": { label: "Violoncello", tones: [["Do", 65.41, ""], ["Sol", 98.0, ""], ["Re", 146.83, ""], ["La", 220.0, ""]] },
-  "Ukulele": { label: "Ukulele · GCEA", tones: [["Sol", 392.0, ""], ["Do", 261.63, ""], ["Mi", 329.63, ""], ["La", 440.0, ""]] }
+  "Chitarra": { label: "Chitarra · Standard", key: "app.tuning_guitar", tones: [["Mi", 82.41, "6ª"], ["La", 110.0, "5ª"], ["Re", 146.83, "4ª"], ["Sol", 196.0, "3ª"], ["Si", 246.94, "2ª"], ["Mi", 329.63, "1ª"]] },
+  "ChitarraDropD": { label: "Chitarra · Drop D", key: "app.tuning_guitar_dropd", tones: [["Re", 73.42, "6ª"], ["La", 110.0, "5ª"], ["Re", 146.83, "4ª"], ["Sol", 196.0, "3ª"], ["Si", 246.94, "2ª"], ["Mi", 329.63, "1ª"]] },
+  "Basso": { label: "Basso · 4 corde", key: "app.tuning_bass", tones: [["Mi", 41.20, "4ª"], ["La", 55.0, "3ª"], ["Re", 73.42, "2ª"], ["Sol", 98.0, "1ª"]] },
+  "Basso5": { label: "Basso · 5 corde", key: "app.tuning_bass5", tones: [["Si", 30.87, "5ª"], ["Mi", 41.20, "4ª"], ["La", 55.0, "3ª"], ["Re", 73.42, "2ª"], ["Sol", 98.0, "1ª"]] },
+  "Violino": { label: "Violino", key: "app.tuning_violin", tones: [["Sol", 196.0, ""], ["Re", 293.66, ""], ["La", 440.0, ""], ["Mi", 659.26, ""]] },
+  "Violoncello": { label: "Violoncello", key: "app.tuning_cello", tones: [["Do", 65.41, ""], ["Sol", 98.0, ""], ["Re", 146.83, ""], ["La", 220.0, ""]] },
+  "Ukulele": { label: "Ukulele · GCEA", key: "app.tuning_ukulele", tones: [["Sol", 392.0, ""], ["Do", 261.63, ""], ["Mi", 329.63, ""], ["La", 440.0, ""]] }
 };
+// Localized tuning label (the .label field is the Italian source; the catalog key drives the rest).
+function tuningLabel(tun) { return (tun && tun.key) ? t(tun.key) : (tun ? tun.label : ""); }
 function guessTuningFor(instruments) {
   const ins = (instruments || []).join(" ").toLowerCase();
   if (ins.includes("basso")) return "Basso";
@@ -2184,28 +2360,28 @@ function renderTuner(box) {
   box.appendChild(el(`
     <div class="tool-card">
       <div class="tuner-dual">
-        <div class="tuner-side"><span class="tuner-cap">${ic('music-note')} Reale (piano)</span><div class="tuner-note" id="tConcert">—</div></div>
-        <div class="tuner-side played" id="tPlayedWrap" hidden><span class="tuner-cap">${ic('microphone')} Letta dal tuo strumento</span><div class="tuner-note alt" id="tPlayed">—</div></div>
+        <div class="tuner-side"><span class="tuner-cap">${ic('music-note')} ${t('app.tuner_real_piano')}</span><div class="tuner-note" id="tConcert">—</div></div>
+        <div class="tuner-side played" id="tPlayedWrap" hidden><span class="tuner-cap">${ic('microphone')} ${t('app.tuner_read_instrument')}</span><div class="tuner-note alt" id="tPlayed">—</div></div>
       </div>
-      <div class="tuner-cents" id="tFreq" aria-live="polite">Avvia per accordare</div>
+      <div class="tuner-cents" id="tFreq" aria-live="polite">${t('app.tuner_start_to_tune')}</div>
       <div class="tuner-meter" id="tMeter"><div class="center"></div><div class="needle" id="tNeedle"></div></div>
-      <button class="btn" id="tStart" style="margin-top:14px">${ic('microphone')} Avvia accordatore</button>
-      <p class="view-sub" id="tHint" style="margin-top:10px">Useremo il microfono solo per rilevare la nota. Niente registrazioni.</p>
+      <button class="btn" id="tStart" style="margin-top:14px">${ic('microphone')} ${t('app.tuner_start_btn')}</button>
+      <p class="view-sub" id="tHint" style="margin-top:10px">${t('app.tuner_mic_note')}</p>
     </div>
     <div class="tool-card">
-      <div class="section-label" style="margin-top:0">Il tuo strumento</div>
-      <p class="view-sub">Vedi la <b>nota reale</b> (al piano) e la <b>nota letta</b> sul tuo strumento.</p>
-      <select id="tTrans">${TRANSPOSERS.map((t, i) => `<option value="${i}"${i === tuner.transposeIdx ? " selected" : ""}>${esc(t.name)}</option>`).join("")}</select>
+      <div class="section-label" style="margin-top:0">${t('app.tuner_your_instrument')}</div>
+      <p class="view-sub">${t('app.tuner_real_vs_read')}</p>
+      <select id="tTrans">${TRANSPOSERS.map((tr, i) => `<option value="${i}"${i === tuner.transposeIdx ? " selected" : ""}>${esc(transposerLabel(tr))}</option>`).join("")}</select>
       <div class="row-between" style="margin-top:14px">
-        <label class="field" style="margin:0">Calibrazione (La₄)</label>
+        <label class="field" style="margin:0">${t('app.tuner_calibration')}</label>
         <span class="range-val" id="a4Val">${tuner.a4} Hz</span>
       </div>
-      <input type="range" id="a4Range" min="430" max="446" step="1" value="${tuner.a4}" aria-label="Calibrazione La4">
+      <input type="range" id="a4Range" min="430" max="446" step="1" value="${tuner.a4}" aria-label="${esc(t('app.tuner_calibration_aria'))}">
     </div>
     <div class="tool-card">
-      <div class="section-label" style="margin-top:0">${ic('sliders')} Accordatura di riferimento</div>
-      <select id="tuningSel" aria-label="Accordatura">${Object.entries(TUNINGS).map(([k, t]) => `<option value="${k}"${k === state.me.tuningId ? " selected" : ""}>${esc(t.label)}</option>`).join("")}</select>
-      <p class="view-sub" style="margin-top:8px">Tocca una corda per sentire la nota giusta.</p>
+      <div class="section-label" style="margin-top:0">${ic('sliders')} ${t('app.tuner_ref_tuning')}</div>
+      <select id="tuningSel" aria-label="${esc(t('app.tuner_tuning_aria'))}">${Object.entries(TUNINGS).map(([k, tun]) => `<option value="${k}"${k === state.me.tuningId ? " selected" : ""}>${esc(tuningLabel(tun))}</option>`).join("")}</select>
+      <p class="view-sub" style="margin-top:8px">${t('app.tuner_tap_string')}</p>
       <div class="ref-tones" id="refTones">${tun.tones.map((g, i) => `<button data-freq="${g[1]}" data-i="${i}">${g[0]}<br><small style="font-weight:600;color:var(--muted)">${esc(g[2] || "")}</small></button>`).join("")}</div>
     </div>`));
   $("#tStart").onclick = startTuner;
@@ -2227,12 +2403,12 @@ async function startTuner() {
     const src = tuner.ctx.createMediaStreamSource(tuner.stream);
     tuner.analyser = tuner.ctx.createAnalyser(); tuner.analyser.fftSize = 2048;
     src.connect(tuner.analyser);
-    if (btn) { btn.textContent = "⏹ Ferma"; btn.onclick = () => { stopTuner(); renderTuner($("#toolBody")); }; }
-    $("#tHint").textContent = "Suona una nota vicino al microfono…";
+    if (btn) { btn.textContent = t('app.tuner_stop'); btn.onclick = () => { stopTuner(); renderTuner($("#toolBody")); }; }
+    $("#tHint").textContent = t('app.tuner_play_a_note');
     detectPitch();
   } catch (e) {
     const hint = $("#tHint");
-    if (hint) hint.innerHTML = `${ic('alert-triangle')} Microfono non disponibile o permesso negato. Usa i <b>toni di riferimento</b> qui sotto per accordarti a orecchio. <button class="btn small secondary" id="tRetryMic" style="margin-top:8px">${ic('refresh')} Riprova permesso</button>`;
+    if (hint) hint.innerHTML = `${ic('alert-triangle')} ${t('app.tuner_mic_denied')} <button class="btn small secondary" id="tRetryMic" style="margin-top:8px">${ic('refresh')} ${t('app.tuner_retry_mic')}</button>`;
     const rb = $("#tRetryMic"); if (rb) rb.onclick = startTuner;
   }
 }
@@ -2266,8 +2442,8 @@ function detectPitch() {
       if (tr && tr.semi) { playedWrap.hidden = false; playedEl.textContent = noteName(midi + tr.semi); }
       else { playedWrap.hidden = true; }
       const tuned = Math.abs(cs) <= 5;
-      const status = tuned ? `${ic('resonance-profile')} in risonanza` : (cs < 0 ? "cala ↓" : "cresce ↑");
-      freqEl.innerHTML = `${freq.toFixed(1)} Hz · ${cs > 0 ? "+" : ""}${cs} cent · ${status}`;
+      const status = tuned ? `${ic('resonance-profile')} ${t('app.tuner_in_resonance')}` : (cs < 0 ? t('app.tuner_flat') : t('app.tuner_sharp'));
+      freqEl.innerHTML = t('app.tuner_status_line', { freq: freq.toFixed(1), cents: (cs > 0 ? "+" : "") + cs, status });
       needle.style.left = `${50 + Math.max(-50, Math.min(50, cs))}%`;
       meter.classList.toggle("in", tuned);
       meter.classList.toggle("resonant", tuned);
@@ -2275,7 +2451,7 @@ function detectPitch() {
       if (!tuned) tuner.wasTuned = false;
     } else if (freqEl) {
       // Silenzio: azzera tutto (niente nota "fantasma" dall'ultima lettura).
-      freqEl.textContent = "Nessun segnale — suona una nota";
+      freqEl.textContent = t('app.tuner_no_signal');
       tuner.hist.length = 0; tuner.wasTuned = false;
       if (concertEl) concertEl.textContent = "—";
       if (playedEl) playedEl.textContent = "—";
@@ -2335,29 +2511,31 @@ function openDeepResults() {
   };
   const big5 = d.big5 || {};
   const personalita = [
-    ["Apertura mentale", big5.O],
-    ["Coscienziosità", big5.C],
-    ["Estroversione", big5.E],
-    ["Gradevolezza", big5.A],
-    ["Stabilità emotiva", big5.N != null ? 1 - big5.N : undefined]
+    [t('app.dp_openness'), big5.O],
+    [t('app.dp_conscientiousness'), big5.C],
+    [t('app.dp_extraversion'), big5.E],
+    [t('app.dp_agreeableness'), big5.A],
+    [t('app.dp_emotional_stability'), big5.N != null ? 1 - big5.N : undefined]
   ].filter(([, v]) => v != null);
   // Top 3 valori (i più importanti per te)
   const topVals = Object.entries(d.values || {}).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k]) => k);
   // Ruolo (circumplex interpersonale)
   const ipc = d.ipc || { D: 0, W: 0 };
-  const ruolo = (ipc.D > 0.08 ? "Tendi a guidare" : ipc.D < -0.08 ? "Tendi a dare supporto" : "Equilibrio fra guida e supporto")
-    + " · " + (ipc.W > 0.08 ? "stile caloroso e collaborativo" : ipc.W < -0.08 ? "stile diretto e indipendente" : "stile equilibrato");
+  const ruolo = t('app.dp_role_combined', {
+    role: (ipc.D > 0.08 ? t('app.dp_role_lead') : ipc.D < -0.08 ? t('app.dp_role_support') : t('app.dp_role_balance')),
+    style: (ipc.W > 0.08 ? t('app.dp_style_warm') : ipc.W < -0.08 ? t('app.dp_style_direct') : t('app.dp_style_balanced'))
+  });
 
   openModal(`
     ${spot("sintonia")}
-    <h2 style="text-align:center">${ic("resonance-profile")} Il tuo Profilo Accordato</h2>
-    <div class="aff-note">Una fotografia indicativa di come ti poni quando suoni. Serve a suggerire affinità, non è una diagnosi. Puoi rifarlo quando vuoi.</div>
-    <div class="section-label">Personalità (Big Five)</div>
+    <h2 style="text-align:center">${ic("resonance-profile")} ${t('app.dp_title')}</h2>
+    <div class="aff-note">${t('app.dp_intro')}</div>
+    <div class="section-label">${t('app.dp_personality')}</div>
     ${personalita.map(([l, v]) => bar(l, v)).join("")}
-    ${topVals.length ? `<div class="section-label">Cosa conta di più per te</div><div class="tags">${topVals.map(v => `<span class="tag accent">${esc(v)}</span>`).join("")}</div>` : ""}
-    <div class="section-label">Stile in band</div>
-    <p style="margin:0;line-height:1.5">${esc(ruolo)}.</p>
-    <button class="btn secondary" id="redoDeep2" style="margin-top:18px">${ic('refresh')} Rifai il sondaggio</button>
+    ${topVals.length ? `<div class="section-label">${t('app.dp_what_matters')}</div><div class="tags">${topVals.map(v => `<span class="tag accent">${esc(v)}</span>`).join("")}</div>` : ""}
+    <div class="section-label">${t('app.dp_band_style')}</div>
+    <p style="margin:0;line-height:1.5">${esc(t('app.dp_role_sentence', { role: ruolo }))}</p>
+    <button class="btn secondary" id="redoDeep2" style="margin-top:18px">${ic('refresh')} ${t('app.profile_redo_survey')}</button>
   `);
   $("#redoDeep2").onclick = () => openDeepSurvey();
 }
@@ -2367,25 +2545,25 @@ function openDeepSurvey() {
   const J = window.JamAffinity, I = J.IPIP_ITEMS, B = J.BUSSOLA, V = J.VALUE_ITEMS, P = J.IPC_ITEMS;
   const likert = (name, label, lo, hi) => `
     <div class="lk"><div class="lk-q">${esc(label)}</div>
-      <div class="likert" data-name="${name}" role="radiogroup" aria-label="${esc(label)}">${[1, 2, 3, 4, 5].map(v => `<button type="button" data-v="${v}" role="radio" aria-checked="${v === 3 ? "true" : "false"}" aria-label="${v} su 5" class="${v === 3 ? "on" : ""}">${v}</button>`).join("")}</div>
+      <div class="likert" data-name="${name}" role="radiogroup" aria-label="${esc(label)}">${[1, 2, 3, 4, 5].map(v => `<button type="button" data-v="${v}" role="radio" aria-checked="${v === 3 ? "true" : "false"}" aria-label="${esc(t('app.likert_aria', { v }))}" class="${v === 3 ? "on" : ""}">${v}</button>`).join("")}</div>
       ${lo ? `<div class="lk-ends"><span>${esc(lo)}</span><span>${esc(hi)}</span></div>` : ""}
     </div>`;
-  const agreeLegend = `<div class="lk-ends" style="margin-bottom:6px"><span>1 = per niente</span><span>5 = del tutto</span></div>`;
+  const agreeLegend = `<div class="lk-ends" style="margin-bottom:6px"><span>${t('app.ds_legend_low')}</span><span>${t('app.ds_legend_high')}</span></div>`;
   openModal(`
     <h2>${ic("resonance-profile")} Profilo Accordato</h2>
-    <div class="aff-note">Profilo <b>ludico ma su scienza vera</b>: valori (modello di Schwartz), personalità (Big Five / Mini-IPIP) e stile relazionale (circumplex). Serve a suggerire affinità e rompere il ghiaccio, <b>non a predire l'anima gemella</b>. Più rispondi, più precisa è la Sintonia. Opzionale e modificabile.</div>
-    <div class="section-label">1 · La bussola del musicista</div>
+    <div class="aff-note">${t('app.ds_intro')}</div>
+    <div class="section-label">${t('app.ds_section_compass')}</div>
     ${B.map(b => likert(b.id, b.q, b.lo, b.hi)).join("")}
-    <div class="section-label">2 · I tuoi valori — quanto ti rispecchia?</div>${agreeLegend}
+    <div class="section-label">${t('app.ds_section_values')}</div>${agreeLegend}
     ${V.map((it, i) => likert("val" + i, it.q)).join("")}
-    <div class="section-label">3 · Personalità — quanto sei d'accordo?</div>${agreeLegend}
+    <div class="section-label">${t('app.ds_section_personality')}</div>${agreeLegend}
     ${I.map((it, i) => likert("ipip" + i, it.q)).join("")}
-    <div class="section-label">4 · Stile relazionale — quanto sei d'accordo?</div>${agreeLegend}
+    <div class="section-label">${t('app.ds_section_relational')}</div>${agreeLegend}
     ${P.map((it, i) => likert("ipc" + i, it.q)).join("")}
-    <div class="section-label">Consenso</div>
-    <label class="set-row"><span>Acconsento al trattamento dei dati su <b>personalità e valori</b> (categoria particolare, <b>art. 9 GDPR</b>) <span class="view-sub" style="font-size:.74rem">· solo per calcolare la Sintonia, mai per pubblicità. Revocabile.</span></span><input type="checkbox" id="deepConsent" ${state.consent && state.consent.deep ? "checked" : ""}></label>
+    <div class="section-label">${t('app.ds_consent')}</div>
+    <label class="set-row"><span>${t('app.ds_consent_label')} <span class="view-sub" style="font-size:.74rem">${t('app.ds_consent_sub')}</span></span><input type="checkbox" id="deepConsent" ${state.consent && state.consent.deep ? "checked" : ""}></label>
     <div class="field-err" id="deepConsentErr" role="alert" hidden></div>
-    <button class="btn" id="deepSave" style="margin-top:18px">Salva il Profilo Accordato</button>
+    <button class="btn" id="deepSave" style="margin-top:18px">${t('app.ds_save')}</button>
   `);
   const root = $("#modalRoot");
   root.querySelectorAll(".likert").forEach(row => row.querySelectorAll("button").forEach(btn => btn.onclick = () => {
@@ -2395,7 +2573,7 @@ function openDeepSurvey() {
   $("#deepSave").onclick = () => {
     // Consenso esplicito art. 9 obbligatorio prima di trattare i dati di personalità/valori.
     if (!$("#deepConsent").checked) {
-      const e = $("#deepConsentErr"); if (e) { e.innerHTML = `${ic('alert-triangle')} Per salvare serve il consenso al trattamento dei dati su personalità e valori (art. 9).`; e.hidden = false; }
+      const e = $("#deepConsentErr"); if (e) { e.innerHTML = `${ic('alert-triangle')} ${t('app.ds_consent_required')}`; e.hidden = false; }
       try { $("#deepConsent").focus(); $("#deepConsent").scrollIntoView({ block: "center", behavior: "smooth" }); } catch (_) {}
       return;
     }
@@ -2411,7 +2589,7 @@ function openDeepSurvey() {
     if (!state.consent) state.consent = { v: 1, ts: 0, noticeSeen: true, deep: false };
     state.consent.deep = true; state.consent.ts = Date.now(); // consenso art. 9 registrato (versionato + timestamp)
     save(); closeModal();
-    toast("Profilo Accordato salvato — ora vedi la Sintonia!", ic("resonance-profile", "accent"));
+    toast(t('app.ds_saved'), ic("resonance-profile", "accent"));
     navigate("profile");
   };
 }
@@ -2421,7 +2599,7 @@ let modalPrevFocus = null;
 function openModal(innerHTML) {
   const root = $("#modalRoot"); root.innerHTML = "";
   modalPrevFocus = document.activeElement;
-  const back = el(`<div class="modal-backdrop"><div class="modal" role="dialog" aria-modal="true"><div class="grip"></div><button type="button" class="modal-close" id="modalClose" aria-label="Chiudi" title="Chiudi">${ic('x')}</button>${innerHTML}</div></div>`);
+  const back = el(`<div class="modal-backdrop"><div class="modal" role="dialog" aria-modal="true"><div class="grip"></div><button type="button" class="modal-close" id="modalClose" aria-label="${esc(t('app.modal_close'))}" title="${esc(t('app.modal_close'))}">${ic('x')}</button>${innerHTML}</div></div>`);
   back.onclick = e => { if (e.target === back) closeModal(); };
   const x = back.querySelector("#modalClose"); if (x) x.onclick = closeModal;
   root.appendChild(back);
@@ -2503,37 +2681,22 @@ function openProfileDrawer() {
   drawerPrevFocus = document.activeElement;
   const back = el(`
     <div class="drawer-backdrop">
-      <aside class="drawer" role="dialog" aria-modal="true" aria-label="Profilo e menù">
+      <aside class="drawer" role="dialog" aria-modal="true" aria-label="${esc(t('app.drawer_label'))}">
         <div class="drawer-head">
-          <b>Menù</b>
-          <button type="button" class="modal-close" id="drwClose" aria-label="Chiudi" title="Chiudi">${ic('x')}</button>
+          <b>${t('app.drawer_menu')}</b>
+          <button type="button" class="modal-close" id="drwClose" aria-label="${esc(t('app.modal_close'))}" title="${esc(t('app.modal_close'))}">${ic('x')}</button>
         </div>
         <button type="button" class="drawer-id" id="drwProfile">
           ${avatarTag(m, false)}
           <div class="drawer-id-txt">
-            <b>${esc(m.name || "Il mio profilo")}${verifiedBadge(m)}</b>
-            <span class="loc">${esc(m.city)} · ${esc(topLevel(m))}</span>
-            <span class="loc">${jamBadge(m.jamCount).icon} ${m.jamCount || 0} jam · ${esc(jamBadge(m.jamCount).tier)}</span>
+            <b>${esc(m.name || t('app.profile_my_profile'))}${verifiedBadge(m)}</b>
+            <span class="loc">${esc(m.city)} · ${esc(levelLabel(topLevel(m)))}</span>
+            <span class="loc">${jamBadge(m.jamCount).icon} ${esc(t('app.drawer_jams_tier', { count: m.jamCount || 0, tier: jamBadge(m.jamCount).tier }))}</span>
           </div>
-          <span class="hub-chev">›</span>
+          <span class="hub-chev">${ic('chevron')}</span>
         </button>
-        <div class="hub-grid">
-          <button class="hub-item" data-go="palco"><span>${ic('microphone')}</span><small>Palco</small></button>
-          <button class="hub-item" data-go="lessons"><span>${ic('graduation-cap')}</span><small>Lezioni</small></button>
-          <button class="hub-item" data-go="tools"><span>${ic('sliders')}</span><small>Strumenti</small></button>
-        </div>
-        <div class="hub-list">
-          <button class="hub-row" id="drwPages"><span>${ic('building')} Le tue Pagine${typeof pagesCount === "function" && pagesCount() ? " · " + pagesCount() : ""}</span><span class="hub-chev">›</span></button>
-          <button class="hub-row" id="drwPro"><span>${ic('resonance-profile', 'grad')} JamMate Pro${m.plan === "pro" ? " · attivo" : ""}</span><span class="hub-chev">›</span></button>
-          <button class="hub-row" id="drwVerify"><span>${ic('check')} ${m.verifyStatus === "verified" ? "Profilo verificato" : (m.verifyStatus === "pending" ? "Verifica in corso…" : "Verifica il profilo")}</span><span class="hub-chev">›</span></button>
-          <button class="hub-row" id="drwBoost"><span>${ic('sparkles')} Metti in evidenza</span><span class="hub-chev">›</span></button>
-        </div>
-        <div class="section-label">Account & supporto</div>
-        <div class="hub-list">
-          <button class="hub-row" id="drwSettings"><span>${ic('gear')} Impostazioni</span><span class="hub-chev">›</span></button>
-          <button class="hub-row" id="drwHelp"><span>${ic('info')} Aiuto &amp; supporto</span><span class="hub-chev">›</span></button>
-          <button class="hub-row" id="drwReport"><span>${ic('flag')} Segnala un problema</span><span class="hub-chev">›</span></button>
-        </div>
+        ${hubGrid()}
+        ${menuRows('drw')}
       </aside>
     </div>`);
   back.onclick = e => { if (e.target === back) closeProfileDrawer(); };
@@ -2588,26 +2751,35 @@ function saveReport(data) {
 }
 function openSettings() {
   state.settings = state.settings || {};
+  const i18n = window.JM && JM.i18n;
+  const langPref = i18n ? i18n.savedPreference : "auto";
+  const langOpts = i18n
+    ? `<option value="auto"${langPref === "auto" ? " selected" : ""}>${t('settings.language_auto')}</option>` +
+      i18n.supported.map(code => `<option value="${code}"${langPref === code ? " selected" : ""}>${i18n.names[code]}</option>`).join("")
+    : "";
   openModal(`
-    <h2>${ic('gear')} Impostazioni</h2>
-    <div class="section-label">Account</div>
-    <div class="aff-note">Sei un musicista. Per registrarti come <b>Locale</b> vai su <b>Palco › Locale</b>.</div>
-    <button class="btn secondary" id="setPro" style="margin-top:10px">${ic('resonance-profile', 'grad')} JamMate Pro${state.me.plan === "pro" ? " · attivo" : " · togli la pubblicità"}</button>
-    <div class="section-label">Notifiche</div>
-    <label class="set-row"><span>Notifiche (simulate)</span><input type="checkbox" id="setNotif" ${state.settings.notif === false ? "" : "checked"}></label>
-    <div class="section-label">Privacy</div>
-    <label class="set-row"><span>Mostra il mio stato di attività</span><input type="checkbox" id="setStatus" ${state.settings.hideStatus ? "" : "checked"}></label>
-    <label class="set-row"><span>Mostra distanza esatta <span class="view-sub" style="font-size:.74rem">· altrimenti solo la zona</span></span><input type="checkbox" id="setDist" ${state.settings.approxDist ? "" : "checked"}></label>
-    <label class="set-row"><span>Link d'ascolto solo dopo il match</span><input type="checkbox" id="setLinks" ${state.settings.linksAfterMatch ? "checked" : ""}></label>
-    <label class="set-row"><span>Comparire in Scopri</span><input type="checkbox" id="setDisc" ${state.settings.discoverHidden ? "" : "checked"}></label>
-    <p class="view-sub" style="font-size:.74rem;margin:2px 0 0">Le scelte sopra diventano effettive col backend.</p>
-    <button class="btn secondary" id="setPrivacy" style="margin-top:10px">${ic('resonance-profile')} Informativa privacy</button>
-    <button class="btn secondary" id="setConsent" style="margin-top:10px">${ic('gear')} Gestisci i consensi</button>
-    <div class="section-label">I tuoi dati</div>
-    <button class="btn secondary" id="setExport">${ic('save')} Esporta i miei dati (JSON)</button>
-    <button class="btn secondary danger" id="setReset" style="margin-top:10px">${ic('refresh')} Azzera dati demo</button>
-    <p class="view-sub" style="text-align:center;margin-top:18px;opacity:.6">JamMate · prototipo v0.1.0</p>
+    <h2>${ic('gear')} ${t('settings.title')}</h2>
+    <div class="section-label">${t('settings.language')}</div>
+    <label class="set-row"><span>${t('settings.language')}</span><select id="setLang" aria-label="${t('settings.language')}">${langOpts}</select></label>
+    <div class="section-label">${t('settings.account')}</div>
+    <div class="aff-note">${t('settings.account_note')}</div>
+    <button class="btn secondary" id="setPro" style="margin-top:10px">${ic('resonance-profile', 'grad')} ${state.me.plan === "pro" ? t('settings.pro_active') : t('settings.pro_upsell')}</button>
+    <div class="section-label">${t('settings.notifications')}</div>
+    <label class="set-row"><span>${t('settings.notif_simulated')}</span><input type="checkbox" id="setNotif" ${state.settings.notif === false ? "" : "checked"}></label>
+    <div class="section-label">${t('settings.privacy')}</div>
+    <label class="set-row"><span>${t('settings.show_status')}</span><input type="checkbox" id="setStatus" ${state.settings.hideStatus ? "" : "checked"}></label>
+    <label class="set-row"><span>${t('settings.show_exact_distance')} <span class="view-sub" style="font-size:.74rem">${t('settings.show_exact_distance_sub')}</span></span><input type="checkbox" id="setDist" ${state.settings.approxDist ? "" : "checked"}></label>
+    <label class="set-row"><span>${t('settings.links_after_match')}</span><input type="checkbox" id="setLinks" ${state.settings.linksAfterMatch ? "checked" : ""}></label>
+    <label class="set-row"><span>${t('settings.appear_discover')}</span><input type="checkbox" id="setDisc" ${state.settings.discoverHidden ? "" : "checked"}></label>
+    <p class="view-sub" style="font-size:.74rem;margin:2px 0 0">${t('settings.backend_note')}</p>
+    <button class="btn secondary" id="setPrivacy" style="margin-top:10px">${ic('resonance-profile')} ${t('settings.privacy_policy')}</button>
+    <button class="btn secondary" id="setConsent" style="margin-top:10px">${ic('gear')} ${t('settings.manage_consents')}</button>
+    <div class="section-label">${t('settings.your_data')}</div>
+    <button class="btn secondary" id="setExport">${ic('save')} ${t('settings.export_data')}</button>
+    <button class="btn secondary danger" id="setReset" style="margin-top:10px">${ic('refresh')} ${t('settings.reset_demo')}</button>
+    <p class="view-sub" style="text-align:center;margin-top:18px;opacity:.6">${t('settings.proto_version')}</p>
   `);
+  if (i18n && $("#setLang")) $("#setLang").onchange = e => { i18n.setLocale(e.target.value); openSettings(); };
   $("#setNotif").onchange = e => { state.settings.notif = e.target.checked; save(); };
   $("#setStatus").onchange = e => { state.settings.hideStatus = !e.target.checked; save(); };
   // BACKEND HOOK: enforcement privacy lato server (chi-vede-cosa); qui solo persistenza della scelta.
@@ -2615,7 +2787,7 @@ function openSettings() {
   $("#setLinks").onchange = e => { state.settings.linksAfterMatch = e.target.checked; save(); };
   $("#setDisc").onchange = e => { state.settings.discoverHidden = !e.target.checked; save(); };
   $("#setExport").onclick = exportMyData;
-  $("#setReset").onclick = () => openConfirm("Azzerare i dati demo?", "Tornerai allo stato iniziale: profilo, match, prenotazioni e preset verranno ripristinati.", { yes: "Azzera", danger: true }, () => { JM.Storage.remove(STORE_KEY); state = loadState(); closeModal(); navigate("discover"); });
+  $("#setReset").onclick = () => openConfirm(t('settings.reset_confirm_title'), t('settings.reset_confirm_body'), { yes: t('settings.reset_confirm_yes'), danger: true }, () => { JM.Storage.remove(STORE_KEY); state = loadState(); closeModal(); navigate("discover"); });
   if ($("#setPrivacy")) $("#setPrivacy").onclick = openPrivacyPolicy;
   if ($("#setConsent")) $("#setConsent").onclick = openConsentManager;
   if ($("#setPro")) $("#setPro").onclick = openPro;
@@ -2625,35 +2797,35 @@ function openSettings() {
 // Informativa sintetica in-app (la versione completa vive in PRIVACY.md, da pubblicare col backend).
 function openPrivacyPolicy() {
   openModal(`
-    <h2>${ic('resonance-profile')} Privacy e dati</h2>
-    <div class="aff-note">In sintesi: <b>i tuoi dati restano su questo dispositivo</b> (memoria del browser). Oggi JamMate è un prototipo senza server: nessun account remoto, <b>nessuna pubblicità</b>, nessun tracciamento.</div>
-    <div class="section-label">Cosa salviamo (sul dispositivo)</div>
-    <p class="view-sub" style="margin:0">Profilo, strumenti, repertorio, match, messaggi, prenotazioni e — se lo compili — il <b>Profilo Accordato</b> (dati su personalità e valori).</p>
-    <div class="section-label">Servizi terzi (solo su tua azione)</div>
-    <p class="view-sub" style="margin:0">La <b>mappa jam</b> e la <b>ricerca indirizzo</b> usano OpenStreetMap/CartoDB e inviano a quei servizi la tua zona o la ricerca. Il <b>microfono</b> serve solo all'accordatore, resta sul dispositivo e non viene mai registrato né inviato. I <b>font</b> sono ospitati da noi (nessun dato verso Google).</p>
-    <div class="section-label">Dati particolari (art. 9 GDPR)</div>
-    <p class="view-sub" style="margin:0">Il Profilo Accordato tratta dati su personalità/valori <b>solo col tuo consenso esplicito</b> e <b>solo</b> per calcolare la Sintonia. Mai venduti, mai usati per pubblicità. Revocabile in ogni momento.</p>
-    <div class="section-label">I tuoi diritti</div>
-    <p class="view-sub" style="margin:0">Puoi <b>esportare</b> i tuoi dati, <b>cancellarli</b> e <b>gestire/revocare i consensi</b> dalle Impostazioni. Col backend pubblicheremo l'informativa completa e i contatti del titolare del trattamento.</p>
-    <button class="btn" id="ppClose" style="margin-top:16px">Ho capito</button>`);
+    <h2>${ic('resonance-profile')} ${t('app.privacy_title')}</h2>
+    <div class="aff-note">${t('app.privacy_intro')}</div>
+    <div class="section-label">${t('app.privacy_what_we_save')}</div>
+    <p class="view-sub" style="margin:0">${t('app.privacy_what_we_save_body')}</p>
+    <div class="section-label">${t('app.privacy_third_parties')}</div>
+    <p class="view-sub" style="margin:0">${t('app.privacy_third_parties_body')}</p>
+    <div class="section-label">${t('app.privacy_art9')}</div>
+    <p class="view-sub" style="margin:0">${t('app.privacy_art9_body')}</p>
+    <div class="section-label">${t('app.privacy_rights')}</div>
+    <p class="view-sub" style="margin:0">${t('app.privacy_rights_body')}</p>
+    <button class="btn" id="ppClose" style="margin-top:16px">${t('app.got_it')}</button>`);
   if ($("#ppClose")) $("#ppClose").onclick = closeModal;
 }
 // Gestione/revoca dei consensi (diritto di revoca, art. 7 GDPR).
 function openConsentManager() {
   const c = state.consent || (state.consent = { v: 1, ts: 0, noticeSeen: false, deep: false });
   openModal(`
-    <h2>${ic('gear')} I tuoi consensi</h2>
-    <div class="aff-note">Puoi revocare un consenso in qualsiasi momento. La revoca non intacca i trattamenti già svolti.</div>
-    <label class="set-row"><span>Profilo Accordato <span class="view-sub" style="font-size:.74rem">· dati personalità/valori (art. 9) per la Sintonia</span></span><input type="checkbox" id="csDeep" ${c.deep ? "checked" : ""}></label>
-    <p class="view-sub" style="font-size:.74rem;margin:6px 0 0">Togliendo il consenso, il Profilo Accordato viene disattivato e i suoi dati rimossi dal dispositivo.</p>
-    <button class="btn secondary" id="csPolicy" style="margin-top:16px">${ic('resonance-profile')} Leggi l'informativa</button>`);
+    <h2>${ic('gear')} ${t('app.consent_title')}</h2>
+    <div class="aff-note">${t('app.consent_intro')}</div>
+    <label class="set-row"><span>${t('app.consent_pa_label')} <span class="view-sub" style="font-size:.74rem">${t('app.consent_pa_sub')}</span></span><input type="checkbox" id="csDeep" ${c.deep ? "checked" : ""}></label>
+    <p class="view-sub" style="font-size:.74rem;margin:6px 0 0">${t('app.consent_pa_note')}</p>
+    <button class="btn secondary" id="csPolicy" style="margin-top:16px">${ic('resonance-profile')} ${t('app.consent_read_policy')}</button>`);
   if ($("#csPolicy")) $("#csPolicy").onclick = openPrivacyPolicy;
   if ($("#csDeep")) $("#csDeep").onchange = (e) => {
     if (e.target.checked) { c.deep = true; c.ts = Date.now(); save(); }
     else {
       // Revoca art. 9: spegni il Profilo Accordato ed elimina i dati sensibili dal dispositivo.
       c.deep = false; if (state.me.deep) state.me.deep = { done: false };
-      save(); toast("Consenso revocato — Profilo Accordato rimosso", ic('check', 'ok'));
+      save(); toast(t('app.consent_revoked'), ic('check', 'ok'));
     }
   };
 }
@@ -2662,11 +2834,11 @@ function maybeShowPrivacyNotice() {
   if (!state.consent) state.consent = { v: 1, ts: 0, noticeSeen: false, deep: false };
   if (state.consent.noticeSeen) return;
   openModal(`
-    <h2>${ic('resonance-profile')} Privacy, in chiaro</h2>
-    <div class="aff-note">I tuoi dati restano <b>su questo dispositivo</b>. Nessun account remoto, <b>nessuna pubblicità</b>, nessun tracciamento. Mappa e ricerca indirizzo usano OpenStreetMap/CartoDB solo quando le apri; il microfono serve solo all'accordatore.</div>
-    <p class="view-sub" style="margin:8px 0 0">Il <b>Profilo Accordato</b> (personalità/valori) è facoltativo e ti chiederemo un consenso esplicito a parte. Puoi esportare o cancellare i dati dalle Impostazioni.</p>
-    <button class="btn" id="pnOk" style="margin-top:16px">Ho capito</button>
-    <button class="btn secondary small" id="pnMore" style="margin-top:10px">Leggi i dettagli</button>`);
+    <h2>${ic('resonance-profile')} ${t('app.notice_title')}</h2>
+    <div class="aff-note">${t('app.notice_body')}</div>
+    <p class="view-sub" style="margin:8px 0 0">${t('app.notice_pa_note')}</p>
+    <button class="btn" id="pnOk" style="margin-top:16px">${t('app.got_it')}</button>
+    <button class="btn secondary small" id="pnMore" style="margin-top:10px">${t('app.notice_read_details')}</button>`);
   const ack = () => { state.consent.noticeSeen = true; state.consent.ts = Date.now(); save(); };
   if ($("#pnOk")) $("#pnOk").onclick = () => { ack(); closeModal(); setTimeout(maybeShowGuide, 350); /* dopo che il sheet si è chiuso */ };
   if ($("#pnMore")) $("#pnMore").onclick = () => { ack(); openPrivacyPolicy(); };
@@ -2678,47 +2850,47 @@ function openPro() {
   const isPro = state.me.plan === "pro";
   const perk = (t) => `<p class="view-sub" style="display:flex;gap:8px;align-items:center;margin:7px 0">${ic('check', 'ok')} <span>${t}</span></p>`;
   openModal(`
-    <h2>${ic('resonance-profile', 'grad')} JamMate Pro</h2>
-    <div class="aff-note">Un'app indipendente si regge sulla community. <b>Pro</b> toglie gli spazi promossi e aggiunge valore — <b>senza toccare i tuoi dati</b>.</div>
-    <div class="section-label">Cosa include</div>
-    ${perk("Nessuna pubblicità, ovunque")}
-    ${perk("Più visibilità in Scopri")}
-    ${perk("Sintonia avanzata e filtri Pro")}
-    ${perk("Badge sostenitore")}
-    <p class="view-sub" style="font-size:.78rem;margin-top:12px">I pagamenti arriveranno col backend (Stripe). Per ora puoi provare l'esperienza Pro in anteprima.</p>
-    <label class="set-row" style="margin-top:10px"><span>Anteprima Pro (demo) <span class="view-sub" style="font-size:.74rem">· nasconde gli spazi promossi</span></span><input type="checkbox" id="proDemo" ${isPro ? "checked" : ""}></label>`);
+    <h2>${ic('resonance-profile', 'grad')} ${t('app.pro_title')}</h2>
+    <div class="aff-note">${t('app.pro_intro')}</div>
+    <div class="section-label">${t('app.pro_includes')}</div>
+    ${perk(t('app.pro_perk_no_ads'))}
+    ${perk(t('app.pro_perk_visibility'))}
+    ${perk(t('app.pro_perk_sintonia'))}
+    ${perk(t('app.pro_perk_badge'))}
+    <p class="view-sub" style="font-size:.78rem;margin-top:12px">${t('app.pro_payments_note')}</p>
+    <label class="set-row" style="margin-top:10px"><span>${t('app.pro_demo_label')} <span class="view-sub" style="font-size:.74rem">${t('app.pro_demo_sub')}</span></span><input type="checkbox" id="proDemo" ${isPro ? "checked" : ""}></label>`);
   if ($("#proDemo")) $("#proDemo").onchange = (e) => {
     state.me.plan = e.target.checked ? "pro" : "free"; save();
-    toast(e.target.checked ? "Anteprima Pro attiva — niente pubblicità" : "Tornato al piano Free", ic(e.target.checked ? "resonance-profile" : "info"));
+    toast(e.target.checked ? t('app.pro_active_toast') : t('app.pro_back_to_free'), ic(e.target.checked ? "resonance-profile" : "info"));
     if (typeof renderFeedBody === "function" && currentView === "feed") renderFeedBody();
   };
 }
 
 // Badge "verificato" (fiducia). Verifica reale (documento/Stripe Identity) col backend.
 function verifiedBadge(o) {
-  return (o && o.verifyStatus === "verified") ? ` <span class="verified-badge" title="Profilo verificato" aria-label="Profilo verificato">${ic('check')}</span>` : "";
+  return (o && o.verifyStatus === "verified") ? ` <span class="verified-badge" title="${esc(t('app.verify_profile_verified'))}" aria-label="${esc(t('app.verify_profile_verified'))}">${ic('check')}</span>` : "";
 }
 function openVerify() {
   const s = state.me.verifyStatus;
   openModal(`
-    <h2>${ic('check', 'ok')} Verifica il profilo</h2>
-    <div class="aff-note">Il badge <b>verificato</b> aumenta la fiducia — utile soprattutto se <b>incassi</b> o <b>ingaggi</b>. Avviene con un documento d'identità, gestito in modo sicuro col backend (es. Stripe Identity).</div>
-    <p class="view-sub" style="margin:8px 0 0">Stato attuale: <b>${s === "verified" ? "verificato" : s === "pending" ? "in corso" : "non verificato"}</b>.</p>
-    ${s === "verified" ? "" : `<button class="btn" id="vReq" style="margin-top:14px">${ic('check')} Richiedi la verifica</button>`}
-    <label class="set-row" style="margin-top:14px"><span>Anteprima badge (demo)</span><input type="checkbox" id="vDemo" ${s === "verified" ? "checked" : ""}></label>`);
-  if ($("#vReq")) $("#vReq").onclick = () => { state.me.verifyStatus = "pending"; save(); closeModal(); toast("Richiesta inviata — la verifica sarà attiva col backend", ic('clock')); };
-  if ($("#vDemo")) $("#vDemo").onchange = (e) => { state.me.verifyStatus = e.target.checked ? "verified" : "none"; save(); toast(e.target.checked ? "Badge verificato (anteprima)" : "Badge rimosso", ic(e.target.checked ? "check" : "info")); if (currentView === "profile") { closeModal(); navigate("profile"); } };
+    <h2>${ic('check', 'ok')} ${t('app.verify_title')}</h2>
+    <div class="aff-note">${t('app.verify_intro')}</div>
+    <p class="view-sub" style="margin:8px 0 0">${t('app.verify_current_status', { status: s === "verified" ? t('app.verify_status_verified') : s === "pending" ? t('app.verify_status_pending') : t('app.verify_status_none') })}</p>
+    ${s === "verified" ? "" : `<button class="btn" id="vReq" style="margin-top:14px">${ic('check')} ${t('app.verify_request')}</button>`}
+    <label class="set-row" style="margin-top:14px"><span>${t('app.verify_demo_label')}</span><input type="checkbox" id="vDemo" ${s === "verified" ? "checked" : ""}></label>`);
+  if ($("#vReq")) $("#vReq").onclick = () => { state.me.verifyStatus = "pending"; save(); closeModal(); toast(t('app.verify_requested'), ic('clock')); };
+  if ($("#vDemo")) $("#vDemo").onchange = (e) => { state.me.verifyStatus = e.target.checked ? "verified" : "none"; save(); toast(e.target.checked ? t('app.verify_badge_on') : t('app.verify_badge_off'), ic(e.target.checked ? "check" : "info")); if (currentView === "profile") { closeModal(); navigate("profile"); } };
 }
 // "Metti in evidenza" (boost à la carte): promozione contestuale della PROPRIA attività, niente art. 9.
 function openBoost() {
   const isPro = state.me.plan === "pro";
   openModal(`
-    <h2>${ic('sparkles')} Metti in evidenza</h2>
-    <div class="aff-note">Più visibilità quando ti serve: spingi il tuo profilo in <b>Scopri</b>, un annuncio in <b>Bacheca</b> o il tuo <b>Locale</b>. È promozione della tua attività, <b>contestuale</b> — nessun uso di dati di personalità.</div>
-    <div class="section-label">Come funziona</div>
-    <p class="view-sub" style="margin:0">Boost a tempo con pagamento singolo, oppure usi il <b>credito incluso in Pro</b>. ${isPro ? "Hai Pro: 1 boost incluso questo mese." : "Con Pro hai un boost incluso ogni mese."}</p>
-    <p class="view-sub" style="font-size:.78rem;margin-top:12px">I pagamenti dei boost arriveranno col backend (Stripe). Prezzi pensati <b>più bassi</b> di Facebook/Instagram per favorire il lancio.</p>
-    ${isPro ? "" : `<button class="btn" id="boostPro" style="margin-top:14px">${ic('resonance-profile', 'grad')} Scopri Pro</button>`}`);
+    <h2>${ic('sparkles')} ${t('app.boost_title')}</h2>
+    <div class="aff-note">${t('app.boost_intro')}</div>
+    <div class="section-label">${t('app.boost_how')}</div>
+    <p class="view-sub" style="margin:0">${isPro ? t('app.boost_how_pro') : t('app.boost_how_free')}</p>
+    <p class="view-sub" style="font-size:.78rem;margin-top:12px">${t('app.boost_payments_note')}</p>
+    ${isPro ? "" : `<button class="btn" id="boostPro" style="margin-top:14px">${ic('resonance-profile', 'grad')} ${t('app.boost_discover_pro')}</button>`}`);
   if ($("#boostPro")) $("#boostPro").onclick = openPro;
 }
 
@@ -2732,12 +2904,12 @@ function markGuideSeen() {
 }
 let _guideOpenedThisSession = false;
 const GUIDE_STEPS = [
-  { art: () => spot('trova'), title: "Benvenuto su JamMate", body: "In pochi passi ti mostriamo come trovare chi suona con te, capire la <b>Sintonia</b> e iniziare a suonare dal vivo. Bastano 30 secondi — puoi saltare quando vuoi." },
-  { art: () => `<span class="guide-icon">${ic('match')}</span>`, title: "Scopri & il Match", body: "In <b>Scopri</b> scorri i profili ordinati per Sintonia: ← passi, → ti connetti. In <b>Cerca con filtri</b> filtri per strumento, livello, genere e distanza. Il Match confronta il <b>tuo</b> profilo con gli altri — per questo serve attivare “Suono”.", go: "discover", goLabel: "Portami in Scopri" },
-  { art: () => spot('sintonia'), title: "La Sintonia", body: "Confronta valori, obiettivi, affidabilità e gusti — non solo i generi. La sblocchi compilando il <b>Profilo Accordato</b> (~4 min) dal tuo Profilo.", go: "profile", goLabel: "Vai al Profilo" },
-  { art: () => `<span class="guide-icon">${ic('chat-bubble')}</span><span class="guide-icon">${ic('map')}</span>`, title: "Feed & Bacheca", body: "Nel <b>Feed</b> segui aggiornamenti e post della community. In <b>Bacheca</b> trovi annunci (cerco/offro) e la <b>Mappa jam</b> vicino a te: lì sblocchi il feedback dopo una jam fatta insieme." },
-  { art: () => `<span class="guide-icon">${ic('microphone')}</span><span class="guide-icon">${ic('building')}</span>`, title: "Palco & le tue Pagine", body: "Dal <b>Palco</b> gestisci la presenza dal vivo: crea una <b>Band</b> o registra un <b>Locale</b> per cercare e ingaggiare musica. Le ritrovi sempre sotto <b>“Le tue Pagine”</b> nel Profilo.", go: "palco", goLabel: "Apri il Palco" },
-  { art: () => `<span class="guide-icon grad">${ic('resonance-profile', 'grad')}</span>`, title: "Il tuo ruolo", body: "Cosa vuoi fare su JamMate? Attiva ciò che ti riguarda — puoi cambiarlo quando vuoi dal Profilo.", role: true }
+  { art: () => spot('trova'), title: t('app.guide_s1_title'), body: t('app.guide_s1_body') },
+  { art: () => `<span class="guide-icon">${ic('match')}</span>`, title: t('app.guide_s2_title'), body: t('app.guide_s2_body'), go: "discover", goLabel: t('app.guide_s2_go') },
+  { art: () => spot('sintonia'), title: t('app.guide_s3_title'), body: t('app.guide_s3_body'), go: "profile", goLabel: t('app.guide_s3_go') },
+  { art: () => `<span class="guide-icon">${ic('chat-bubble')}</span><span class="guide-icon">${ic('map')}</span>`, title: t('app.guide_s4_title'), body: t('app.guide_s4_body') },
+  { art: () => `<span class="guide-icon">${ic('microphone')}</span><span class="guide-icon">${ic('building')}</span>`, title: t('app.guide_s5_title'), body: t('app.guide_s5_body'), go: "palco", goLabel: t('app.guide_s5_go') },
+  { art: () => `<span class="guide-icon grad">${ic('resonance-profile', 'grad')}</span>`, title: t('app.guide_s6_title'), body: t('app.guide_s6_body'), role: true }
 ];
 function openGuide(opts) {
   opts = opts || {};
@@ -2746,9 +2918,9 @@ function openGuide(opts) {
   openModal(`<div class="guide">
     <div id="guideBody"></div>
     <div class="guide-foot">
-      <button class="btn small secondary" id="gBack" type="button">Indietro</button>
+      <button class="btn small secondary" id="gBack" type="button">${t('app.back')}</button>
       <div class="guide-dots" id="gDots" aria-hidden="true">${GUIDE_STEPS.map(() => "<i></i>").join("")}</div>
-      <button class="btn small" id="gNext" type="button">Avanti</button>
+      <button class="btn small" id="gNext" type="button">${t('app.next')}</button>
     </div>
   </div>`);
   const body = $("#guideBody"), dots = $("#gDots").children, back = $("#gBack"), next = $("#gNext");
@@ -2757,24 +2929,24 @@ function openGuide(opts) {
     const s = GUIDE_STEPS[i], lastStep = (i === N - 1);
     body.innerHTML = `<div class="guide-step">
       <div class="guide-art">${s.art()}</div>
-      <span class="sr-only">Passo ${i + 1} di ${N}</span>
+      <span class="sr-only">${esc(t('app.guide_step_of', { n: i + 1, total: N }))}</span>
       <h2 id="guideTitle" tabindex="-1">${s.title}</h2>
       <p class="guide-copy">${s.body}</p>
       ${s.role ? `<div class="card flat" style="margin-top:10px;text-align:left">
-        <label class="set-row"><span>🎸 Suono <span class="view-sub" style="font-size:.74rem">· match, repertorio, Sintonia</span></span><input type="checkbox" id="gCapPlays" ${state.me.caps && state.me.caps.plays ? "checked" : ""}></label>
-        <label class="set-row"><span>🎤 Ingaggio / organizzo <span class="view-sub" style="font-size:.74rem">· pubblica richieste, prenota band</span></span><input type="checkbox" id="gCapHires" ${state.me.caps && state.me.caps.hires ? "checked" : ""}></label>
-        <p class="view-sub" style="font-size:.74rem;margin:6px 0 0">Senza nessuna delle due resti <b>ascoltatore</b>. Rivedi questa guida da <b>Profilo › Aiuto</b>.</p>
+        <label class="set-row"><span>${t('app.profile_cap_plays')} <span class="view-sub" style="font-size:.74rem">${t('app.guide_cap_plays_sub')}</span></span><input type="checkbox" id="gCapPlays" ${state.me.caps && state.me.caps.plays ? "checked" : ""}></label>
+        <label class="set-row"><span>${t('app.profile_cap_hires')} <span class="view-sub" style="font-size:.74rem">${t('app.guide_cap_hires_sub')}</span></span><input type="checkbox" id="gCapHires" ${state.me.caps && state.me.caps.hires ? "checked" : ""}></label>
+        <p class="view-sub" style="font-size:.74rem;margin:6px 0 0">${t('app.guide_role_note')}</p>
       </div>` : ""}
-      ${s.go ? `<button class="btn small secondary" id="gGo" type="button" style="margin-top:12px">${ic('arrow-up')} ${esc(s.goLabel || "Portami lì")}</button>` : ""}
+      ${s.go ? `<button class="btn small secondary" id="gGo" type="button" style="margin-top:12px">${ic('arrow-up')} ${esc(s.goLabel || t('app.guide_go_default'))}</button>` : ""}
     </div>`;
     for (let k = 0; k < dots.length; k++) dots[k].className = (k === i ? "on" : "");
     back.style.visibility = i === 0 ? "hidden" : "visible";
     next.className = "btn small" + (lastStep ? "" : " secondary");
-    next.textContent = lastStep ? "Fatto, iniziamo" : "Avanti";
+    next.textContent = lastStep ? t('app.guide_done') : t('app.next');
     try { $("#guideTitle").focus({ preventScroll: true }); } catch (_) {}
     if ($("#gGo")) $("#gGo").onclick = () => { markGuideSeen(); closeModal(); navigate(s.go); };
-    if ($("#gCapPlays")) $("#gCapPlays").onchange = (e) => { state.me.caps.plays = e.target.checked; save(); toast(e.target.checked ? "Profilo musicista attivo" : "Modalità ascoltatore", ic("check", "ok")); };
-    if ($("#gCapHires")) $("#gCapHires").onchange = (e) => { state.me.caps.hires = e.target.checked; save(); toast(e.target.checked ? "Puoi ingaggiare e organizzare" : "Aggiornato", ic("check", "ok")); };
+    if ($("#gCapPlays")) $("#gCapPlays").onchange = (e) => { state.me.caps.plays = e.target.checked; save(); toast(e.target.checked ? t('app.disc_musician_active') : t('app.role_listener_mode'), ic("check", "ok")); };
+    if ($("#gCapHires")) $("#gCapHires").onchange = (e) => { state.me.caps.hires = e.target.checked; save(); toast(e.target.checked ? t('app.role_can_hire') : t('app.updated'), ic("check", "ok")); };
   }
   back.onclick = () => { if (i > 0) { i--; paint(); } };
   next.onclick = () => { if (i < N - 1) { i++; paint(); } else finish(); };
@@ -2791,20 +2963,20 @@ function maybeShowGuide() {
   openGuide({ start: 0 });
 }
 const FAQ = [
-  ["Come trovo musicisti vicino a me?", "Vai su <b>Scopri</b>: scorri i profili o apri i filtri (strumento, livello, genere, distanza). La distanza arriva fino a “Ovunque”."],
-  ["Come do un feedback a chi ho conosciuto?", "Il feedback tra <b>JamMates</b> si sblocca dopo aver completato una <b>jam insieme</b> (Bacheca › Mappa jam). Insegnante e band/locale hanno valutazioni separate."],
-  ["Come funzionano le lezioni online?", "Prenotando una lezione online generiamo un <b>link videolezione</b> (modificabile) e un file calendario. Le trovi in <b>Lezioni</b> (Profilo)."],
-  ["Posso registrarmi come locale?", "Sì: <b>Palco › Locale</b> apre l'area dedicata per cercare e ingaggiare musicisti e band."]
+  [t('app.faq_q1'), t('app.faq_a1')],
+  [t('app.faq_q2'), t('app.faq_a2')],
+  [t('app.faq_q3'), t('app.faq_a3')],
+  [t('app.faq_q4'), t('app.faq_a4')]
 ];
 function openHelp() {
   openModal(`
-    <h2>${ic('info')} Aiuto & supporto</h2>
-    <button class="btn secondary" id="helpGuide" style="margin-bottom:12px">${ic('sparkles')} Rivedi la guida</button>
-    <input type="text" id="faqSearch" placeholder="Cerca nelle domande…" autocomplete="off" style="margin-bottom:10px">
-    <div class="section-label">Domande frequenti</div>
+    <h2>${ic('info')} ${t('app.help_title')}</h2>
+    <button class="btn secondary" id="helpGuide" style="margin-bottom:12px">${ic('sparkles')} ${t('app.help_review_guide')}</button>
+    <input type="text" id="faqSearch" placeholder="${esc(t('app.help_search_ph'))}" autocomplete="off" style="margin-bottom:10px">
+    <div class="section-label">${t('app.help_faq')}</div>
     <div id="faqList">${FAQ.map(([q, a]) => `<details class="faq"><summary>${esc(q)}</summary><div class="faq-a">${a}</div></details>`).join("")}</div>
-    <div class="section-label">Non hai trovato risposta?</div>
-    <button class="btn" id="helpReport">${ic('flag')} Segnala un problema</button>
+    <div class="section-label">${t('app.help_no_answer')}</div>
+    <button class="btn" id="helpReport">${ic('flag')} ${t('app.report_problem_title')}</button>
   `);
   const fs = $("#faqSearch");
   if (fs) fs.oninput = () => {
@@ -2812,38 +2984,42 @@ function openHelp() {
     const list = FAQ.filter(([qq, aa]) => !q || (qq + " " + aa).toLowerCase().includes(q));
     $("#faqList").innerHTML = list.length
       ? list.map(([qq, aa]) => `<details class="faq"${q ? " open" : ""}><summary>${esc(qq)}</summary><div class="faq-a">${aa}</div></details>`).join("")
-      : `<p class="view-sub">Nessuna risposta per “${esc(fs.value)}”. Prova a segnalare il problema qui sotto.</p>`;
+      : `<p class="view-sub">${t('app.help_no_results', { query: esc(fs.value) })}</p>`;
   };
   if ($("#helpGuide")) $("#helpGuide").onclick = () => { closeModal(); setTimeout(() => openGuide({ replay: true }), 250); };
   $("#helpReport").onclick = () => openReportProblem();
 }
 function openReportProblem() {
-  const TYPES = ["Bug / errore", "Contenuto inappropriato", "Truffa / pagamento", "Account", "Altro"];
+  const TYPES = [t('app.report_type_bug'), t('app.report_type_inappropriate'), t('app.report_type_scam'), t('app.report_type_account'), t('app.report_type_other')];
   openModal(`
-    <h2>${ic('flag')} Segnala un problema</h2>
-    <p class="view-sub">Raccontaci cosa non va. Nel prototipo la segnalazione resta sul tuo dispositivo; col backend arriverà al supporto.</p>
-    <label class="field">Tipo</label><select id="rpType">${options(TYPES, TYPES[0])}</select>
-    <label class="field" style="margin-top:10px">Descrizione</label><textarea id="rpText" placeholder="Descrivi il problema…"></textarea>
-    <button class="btn" id="rpSend" style="margin-top:14px">Invia segnalazione</button>
+    <h2>${ic('flag')} ${t('app.report_problem_title')}</h2>
+    <p class="view-sub">${t('app.report_problem_sub')}</p>
+    <label class="field">${t('app.report_type_label')}</label><select id="rpType">${options(TYPES, TYPES[0])}</select>
+    <label class="field" style="margin-top:10px">${t('app.report_desc_label')}</label><textarea id="rpText" placeholder="${esc(t('app.report_desc_ph'))}"></textarea>
+    <button class="btn" id="rpSend" style="margin-top:14px">${t('app.report_send')}</button>
   `);
   $("#rpSend").onclick = () => {
-    const text = $("#rpText").value.trim(); if (!text) return markFieldError("#rpText", "Scrivi una descrizione.");
+    const text = $("#rpText").value.trim(); if (!text) return markFieldError("#rpText", t('app.report_desc_required'));
     saveReport({ kind: "problem", type: $("#rpType").value, text });
-    closeModal(); toast("Segnalazione inviata, grazie 🙏");
+    closeModal(); toast(t('app.report_sent_thanks'));
   };
 }
 // Segnalazione contestuale di contenuto/utente (motivo → salvato in locale).
-const REPORT_REASONS = ["Spam", "Molestie / odio", "Contenuto inappropriato", "Truffa / pagamento", "Profilo falso", "Altro"];
+const REPORT_REASONS = [
+  ["spam", "app.report_reason_spam"], ["harassment", "app.report_reason_harassment"],
+  ["inappropriate", "app.report_type_inappropriate"], ["scam", "app.report_type_scam"],
+  ["fake", "app.report_reason_fake"], ["other", "app.report_type_other"]
+];
 function openReportSheet(label, ctx) {
   openModal(`
-    <h2>${ic('flag')} Segnala</h2>
+    <h2>${ic('flag')} ${t('app.report_label_title')}</h2>
     <div class="aff-note">${esc(label)}</div>
-    <div class="section-label">Motivo</div>
-    <div class="chips" id="repReasons">${REPORT_REASONS.map(r => `<button type="button" class="chip rep-reason" data-r="${esc(r)}">${esc(r)}</button>`).join("")}</div>
+    <div class="section-label">${t('app.report_reason')}</div>
+    <div class="chips" id="repReasons">${REPORT_REASONS.map(([, key]) => `<button type="button" class="chip rep-reason" data-r="${esc(t(key))}">${esc(t(key))}</button>`).join("")}</div>
   `);
   document.querySelectorAll("#repReasons .rep-reason").forEach(b => b.onclick = () => {
     saveReport({ kind: "content", target: label, ctx: ctx || "", reason: b.dataset.r });
-    closeModal(); toast("Segnalazione inviata. Grazie, la esamineremo 🙏");
+    closeModal(); toast(t('app.report_content_sent'));
   });
 }
 
@@ -2851,18 +3027,18 @@ function openReportSheet(label, ctx) {
 const CITY_QUICK = ["Milano", "Roma", "Torino", "Napoli", "Bologna", "Firenze", "Genova", "Verona", "Bergamo", "Brescia", "Padova", "Bari", "Palermo"];
 function openCityPicker() {
   openModal(`
-    <h2>${ic('map-pin')} La tua città</h2>
-    <div class="aff-note">Serve a mostrarti musicisti e jam vicino a te e a centrare la mappa.</div>
-    <label class="field" style="margin-top:12px">Scrivi o scegli la città</label>
-    <input type="text" id="cityInput" value="${esc(state.me.city || "")}" placeholder="Es. Milano" autocomplete="off" />
-    <div class="section-label">Città popolari</div>
+    <h2>${ic('map-pin')} ${t('app.city_title')}</h2>
+    <div class="aff-note">${t('app.city_intro')}</div>
+    <label class="field" style="margin-top:12px">${t('app.city_input_label')}</label>
+    <input type="text" id="cityInput" value="${esc(state.me.city || "")}" placeholder="${esc(t('app.city_input_ph'))}" autocomplete="off" />
+    <div class="section-label">${t('app.city_popular')}</div>
     <div class="chips" id="cityQuick">${CITY_QUICK.map(c => `<span class="chip${c === state.me.city ? " on" : ""}" data-chip="${esc(c)}">${esc(c)}</span>`).join("")}</div>
-    <button class="btn" id="citySave" style="margin-top:16px">Conferma</button>`);
+    <button class="btn" id="citySave" style="margin-top:16px">${t('app.city_confirm')}</button>`);
   const input = $("#cityInput");
   const apply = () => {
     const v = (input.value || "").trim(); if (!v) return;
     state.me.city = v; const lbl = $("#cityLabel"); if (lbl) lbl.textContent = v;
-    save(); closeModal(); toast("Città: " + v, ic('map-pin')); render();
+    save(); closeModal(); toast(t('app.city_set', { city: v }), ic('map-pin')); render();
   };
   $("#cityQuick").querySelectorAll(".chip").forEach(c => c.onclick = () => { input.value = c.dataset.chip; apply(); });
   $("#citySave").onclick = apply;
@@ -2913,7 +3089,7 @@ document.querySelectorAll(".tab").forEach(t => t.onclick = () => {
 // Domani sostituire il setTimeout con la fetch reale (es. await api.feed.list() / api.board.list()).
 function runRefresh(kind) {
   if (runRefresh._busy) return;
-  if (document.body.classList.contains("offline")) { toast("Sei offline — riprova quando torni online", ic("alert-triangle")); return; }
+  if (document.body.classList.contains("offline")) { toast(t('app.refresh_offline'), ic("alert-triangle")); return; }
   runRefresh._busy = true;
   const btn = document.getElementById(kind === "feed" ? "feedRefresh" : "boardRefresh");
   if (btn) { btn.classList.add("is-loading"); btn.disabled = true; }
@@ -2924,7 +3100,7 @@ function runRefresh(kind) {
       else if (kind === "board" && typeof renderBoard2 === "function") renderBoard2(); // ricrea l'header (e il bottone)
     } finally {
       const b = document.getElementById(kind === "feed" ? "feedRefresh" : "boardRefresh"); if (b) { b.classList.remove("is-loading"); b.disabled = false; }
-      toast("Aggiornato", ic("refresh", "accent"));
+      toast(t('app.refreshed'), ic("refresh", "accent"));
       if (typeof haptic === "function") haptic("Light");
     }
   }, 550);
@@ -2992,12 +3168,12 @@ document.addEventListener("focusout", (e) => { if (isTypingField(e.target)) setT
 // Stato offline globale: banner in cima + classe body.offline (fonte di verità per le azioni di rete).
 // Oggi tutto gira in locale; conta per SW/mappa/geocoding e fa da base per il passaggio a JM.Api.
 (function offlineIndicator() {
-  const banner = el(`<div class="net-banner" role="status" aria-live="polite">${ic('alert-triangle')}<span>Sei offline — alcune funzioni sono limitate</span></div>`);
+  const banner = el(`<div class="net-banner" role="status" aria-live="polite">${ic('alert-triangle')}<span>${t('app.offline_banner')}</span></div>`);
   document.body.appendChild(banner);
   let wasOffline = false;
   const setOnline = (on) => {
     document.body.classList.toggle("offline", !on);
-    if (on && wasOffline && typeof toast === "function") toast("Di nuovo online", ic("check", "ok"));
+    if (on && wasOffline && typeof toast === "function") toast(t('app.online_again'), ic("check", "ok"));
     wasOffline = !on;
   };
   window.addEventListener("offline", () => setOnline(false));
@@ -3006,6 +3182,17 @@ document.addEventListener("focusout", (e) => { if (isTypingField(e.target)) setT
 })();
 $("#cityLabel").textContent = state.me.city;
 navigate("discover");
+// i18n: localizza la shell statica (header/tabbar/titolo) e ri-applica al cambio lingua.
+// La lingua di default è già stata risolta da i18n.js (preferenza salvata → dispositivo → Inglese).
+if (window.JM && JM.i18n) {
+  try { document.title = JM.i18n.t("app.title"); } catch (_) {}
+  JM.i18n.applyStatic();
+  JM.i18n.onChange(() => {
+    try { document.title = JM.i18n.t("app.title"); } catch (_) {}
+    JM.i18n.applyStatic();
+    render();
+  });
+}
 maybeShowPrivacyNotice(); // disclosure trasparente al primo avvio (GDPR/ePrivacy)
 // Tasto Indietro del browser + gesto Indietro Android (PWA): chiude overlay/modale, poi torna
 // alla vista precedente, infine esce. Mirror della logica nativa (Capacitor) via history/popstate.

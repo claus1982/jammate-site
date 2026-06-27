@@ -23,6 +23,8 @@
     megaphone: '<path d="M3.5 10.4 14 6.6v10.8L3.5 13.6z"/><path d="M6.6 14V17a1.6 1.6 0 0 0 3.2 0v-2.2"/><path d="M17 9.6V14.4" stroke="' + ACC + '" stroke-width="1.7"/><path d="M20 8.2V15.8" stroke="' + NODE + '" stroke-width="1.7"/>',
     // nota: gambo + testa-nodo rosa
     "music-note": '<path d="M10.8 16.6V6.4c2.8.3 4.4 1.6 4.4 4"/><ellipse cx="8" cy="16.6" rx="2.9" ry="2.4" fill="' + NODE + '" stroke="none"/>',
+    // play: triangolo "suono" arrotondato + NODO rosa (controllo di riproduzione, famiglia suono)
+    play: '<path d="M9 6.5 18 12 9 17.5Z" fill="currentColor" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round"/><circle cx="11.6" cy="12" r="1.45" fill="' + NODE + '" stroke="none"/>',
     // microfono + onda d'ascolto viola
     microphone: '<rect x="9" y="3" width="6" height="10" rx="3"/><path d="M6 11a6 6 0 0 0 12 0" stroke="' + ACC + '"/><path d="M12 17v3M8.5 20h7"/>',
     // filtri = mixer a fader verticali + manopole-nodo rosa
@@ -51,12 +53,20 @@
     celebration: '<circle cx="12" cy="12" r="2.3" fill="' + NODE + '" stroke="none"/><path d="M12 6.4V3.5M12 20.5v-2.9M5.9 12H3M21 12h-2.9M7.6 7.6 5.6 5.6M18.4 18.4l-2-2M16.4 7.6l2-2M5.6 18.4l2-2" stroke="' + ACC + '"/>',
 
     // ————— Gesti singoli (monolinea, adattivi) —————
-    check: '<path d="M5 12.8l4.2 4.2L19 7.2"/>',
-    plus: '<path d="M12 6V18"/><path d="M6 12H18"/>',
+    // Gesti-firma: monolinea currentColor + micro NODO rosa al punto-chiave (resa "Risonanza")
+    check: '<path d="M5 12.8l4.2 4.2L19 7.2"/><circle cx="9.2" cy="17" r="1.5" fill="' + NODE + '" stroke="none"/>',
+    plus: '<path d="M12 6.4V17.6"/><path d="M6.4 12H17.6"/><circle cx="12" cy="12" r="1.5" fill="' + NODE + '" stroke="none"/>',
+    // x: gesto-chiusura → monolinea pulita (massima chiarezza, è la X universale dei modali)
     x: '<path d="M6 6 18 18M18 6 6 18"/>',
+    // cestino (famiglia "onesta": forma + nodo rosa) — azione elimina, esplicita
+    trash: '<path d="M4.5 7.2h15"/><path d="M9.4 7.2V5.7A1.7 1.7 0 0 1 11.1 4h1.8A1.7 1.7 0 0 1 14.6 5.7V7.2"/><path d="M6.6 7.2l.85 11A2 2 0 0 0 9.45 20h5.1a2 2 0 0 0 2-1.8l.85-11"/><path d="M10.3 10.6v5.4M13.7 10.6v5.4" stroke="' + ACC + '"/><circle cx="12" cy="5.4" r="1.05" fill="' + NODE + '" stroke="none"/>',
+    // Chevron bespoke (sostituisce il carattere tipografico › nelle hub-row): monolinea coerente coi gesti
+    chevron: '<path d="M9.5 5.5 16 12l-6.5 6.5"/>',
     "arrow-up": '<path d="M12 19V5.5"/><path d="M6.4 11.1 12 5.5l5.6 5.6"/>',
     "arrow-down": '<path d="M12 5v13.5"/><path d="M6.4 12.9 12 18.5l5.6-5.6"/>',
     send: '<path d="M20.6 3.4 14 20.6l-3.6-7-7-3.6z"/><path d="M20.6 3.4 10.4 13.6" stroke="' + ACC + '"/>',
+    // link esterno: riquadro + freccia che esce (viola), stessa sotto-famiglia di send/refresh
+    "external": '<path d="M11 6.5H6.5A1.5 1.5 0 0 0 5 8v9.5A1.5 1.5 0 0 0 6.5 19H16a1.5 1.5 0 0 0 1.5-1.5V13"/><path d="M13.5 5.5H19V11" stroke="' + ACC + '"/><path d="M19 5.5 11 13.5" stroke="' + ACC + '"/>',
     refresh: '<path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M17.8 3.6v3.9h-3.9" stroke="' + ACC + '"/>',
     heart: '<path d="M12 19.5 4.8 12.3a4.4 4.4 0 0 1 6.2-6.2l1 1 1-1a4.4 4.4 0 0 1 6.2 6.2z"/>',
     star: '<path d="M12 3.6l2.55 5.16 5.7.83-4.12 4.02.97 5.67L12 16.97 6.9 19.3l.97-5.67L3.75 9.6l5.7-.83z"/>',

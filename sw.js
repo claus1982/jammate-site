@@ -1,8 +1,8 @@
 /* JamMate service worker — precache del solo SHELL CRITICO (HTML/CSS/JS + Leaflet + icone base);
  * gli asset secondari (splash, og-card) sono messi in cache a runtime alla prima richiesta. */
-const CACHE = "jammate-v100";
+const CACHE = "jammate-v104";
 const ASSETS = [
-  "./", "./index.html", "./styles.css", "./storage.js", "./api.js", "./app.js", "./data.js", "./affinity.js", "./icons.js", "./gigs.js", "./social.js",
+  "./", "./index.html", "./styles.css", "./runtime.js", "./storage.js", "./api.js", "./sync.js", "./bootstrap.js", "./app.js", "./data.js", "./affinity.js", "./icons.js", "./gigs.js", "./social.js",
   "./vendor/leaflet/leaflet.js", "./vendor/leaflet/leaflet.css", "./vendor/fonts/plus-jakarta-sans.css",
   "./manifest.webmanifest", "./icons/icon.svg", "./icons/icon-192.png", "./icons/icon-512.png"
 ];

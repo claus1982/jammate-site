@@ -1,14 +1,11 @@
 /* JamMate — Client API (data layer "api").
  *
- * È il pezzo che collega la PWA al backend Azure Functions definito in
- * backend/openapi.yaml. Oggi NON è ancora attivo: l'app usa il backend locale
- * (storage.js). Al Passo 8 del deploy lo configuriamo e iniziamo a migrare i
- * flussi uno per uno (vedi ADR 0005).
+ * Collega la PWA al backend Node definito in backend/openapi.yaml.
  *
  * Uso (dopo il deploy):
  *   JM.Api.configure({
- *     baseUrl: "https://jammate-api-XXX.azurewebsites.net/v1",
- *     getToken: async () => msalToken   // token di Microsoft Entra External ID
+ *     baseUrl: "https://api.jammate.it/v1",
+ *     getToken: async () => token
  *   });
  *   const me = await JM.Api.me.get();
  *
@@ -33,7 +30,7 @@
   }
 
   /* Richiesta generica. Aggiunge il token, gestisce JSON ed errori in modo uniforme. */
-  async function request(method, path, { body, query, isForm } = {}) {
+  async function request(method, path, { body, query, isForm, rawBody } = {}) {
     if (!cfg.baseUrl) throw new ApiError(0, "JM.Api non configurato (manca baseUrl)");
 
     let url = cfg.baseUrl.replace(/\/$/, "") + path;
@@ -49,7 +46,9 @@
     if (token) headers["Authorization"] = "Bearer " + token;
 
     const init = { method, headers };
-    if (body != null) {
+    if (rawBody != null) {
+      init.body = rawBody;
+    } else if (body != null) {
       if (isForm) { init.body = body; }            // FormData (es. upload foto): niente Content-Type manuale
       else { headers["Content-Type"] = "application/json"; init.body = JSON.stringify(body); }
     }
@@ -105,7 +104,7 @@
     matches:  () => get("/matches"),
     messages: {
       with: (userId) => get(`/messages/${seg(userId)}`),
-      send: (userId, text) => post(`/messages/${seg(userId)}`, { text })
+      send: (userId, text, image) => post(`/messages/${seg(userId)}`, { text, image })
     },
 
     // --- Band + inviti ---
@@ -116,7 +115,13 @@
       update:  (id, band) => put(`/bands/${seg(id)}`, band),
       invite:  (id, inviteeId, role, message) => post(`/bands/${seg(id)}/invites`, { inviteeId, role, message }),
       myInvites: () => get("/invites"),
-      respondInvite: (inviteId, action) => patch(`/invites/${seg(inviteId)}`, { action })
+      respondInvite: (inviteId, action) => patch(`/invites/${seg(inviteId)}`, { action }),
+      // EPK audio/video showcase (AUDIO_SHOWCASE.md): il backend risolve l'oEmbed e il poster first-party.
+      media: {
+        list:   (bandId) => get(`/bands/${seg(bandId)}/media`),
+        add:    (bandId, url, title, rights) => post(`/bands/${seg(bandId)}/media`, { url, title, rights }),
+        remove: (bandId, mediaId) => del(`/bands/${seg(bandId)}/media/${seg(mediaId)}`)
+      }
     },
 
     // --- Locali + serate ---
@@ -169,6 +174,21 @@
       list:     () => get("/notifications"),
       markRead: () => patch("/notifications/read", {}),
       clear:    () => del("/notifications")
+    },
+
+    auth: {
+      register: (email, password, displayName) => post("/auth/register", { email, password, displayName }),
+      login: (email, password) => post("/auth/login", { email, password }),
+      session: () => get("/auth/session")
+    },
+
+    state: {
+      get: () => get("/state"),
+      save: (state) => put("/state", { state })
+    },
+
+    media: {
+      upload: (blob) => request("POST", "/media", { rawBody: blob })
     },
 
     // --- Diagnostica ---

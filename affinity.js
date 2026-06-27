@@ -164,47 +164,47 @@ function tasteOverlap(a, b) {
  * Ritorna { score, parts[], warn[], insight{}, depth } */
 function computeAffinity(A, B) {
   const a = A.deep || {}, b = B.deep || {};
-  const comps = [];  // {key, s, label, text}
-  const warn = [];
+  const comps = [];  // {key, s, t}  — t = descriptor {k, ...params}; the UI localizes it (no prose here).
+  const warn = [];   // [{k, ...params}]
 
   // Valori (similarità: correlazione di profilo già centrata)
   if (a.values && b.values) {
     const va = VALUE_KEYS.map(k => a.values[k] ?? 0), vb = VALUE_KEYS.map(k => b.values[k] ?? 0);
     const r = pearson(va, vb);
-    comps.push({ key: "values", s: clamp01((r + 1) / 2), label: "Valori condivisi", text: valuesText(a.values, b.values, r) });
+    comps.push({ key: "values", s: clamp01((r + 1) / 2), t: valuesText(a.values, b.values, r) });
   }
   // Obiettivi/impegno (similarità) + veto
   if (a.goal != null && b.goal != null) {
     const s = (sim5(a.goal, b.goal) + sim5(a.rehear ?? 3, b.rehear ?? 3)) / 2;
-    comps.push({ key: "goal", s, label: "Obiettivi & impegno", text: goalText(a.goal, b.goal) });
-    if (Math.abs(a.goal - b.goal) >= 3) warn.push("Obiettivi molto diversi (hobby vs professione)");
+    comps.push({ key: "goal", s, t: goalText(a.goal, b.goal) });
+    if (Math.abs(a.goal - b.goal) >= 3) warn.push({ k: "warn_goal_diff" });
   }
   // Gusti + repertorio
   const taste = tasteOverlap(A, B);
-  comps.push({ key: "taste", s: taste.score, label: "Gusti & repertorio", text: tasteText(taste) });
+  comps.push({ key: "taste", s: taste.score, t: tasteText(taste) });
   // Affidabilità (anello debole). Usa gli endorsement reali quando presenti,
   // altrimenti l'auto-dichiarazione (Bussola).
   if (a.reliab != null && b.reliab != null) {
     const ra = relOf(A), rb = relOf(B), endorsed = hasEndo(A) || hasEndo(B);
-    comps.push({ key: "reliability", s: norm5(Math.min(ra, rb)), label: "Affidabilità", text: endorsed ? "Affidabilità confermata dagli endorsement della community" : "Conta per entrambi la serietà negli impegni" });
-    if ((a.reliabW >= 4 && rb <= 2) || (b.reliabW >= 4 && ra <= 2)) warn.push("Possibile attrito sull'affidabilità");
+    comps.push({ key: "reliability", s: norm5(Math.min(ra, rb)), t: { k: endorsed ? "reliability_endorsed" : "reliability_declared" } });
+    if ((a.reliabW >= 4 && rb <= 2) || (b.reliabW >= 4 && ra <= 2)) warn.push({ k: "warn_reliability" });
   }
   // Stile (modo di suonare)
   if (a.orig != null && b.orig != null) {
     const s = (sim5(a.orig, b.orig) + sim5(a.improv ?? 3, b.improv ?? 3) + sim5(a.energy ?? 3, b.energy ?? 3)) / 3;
-    comps.push({ key: "style", s, label: "Modo di suonare", text: "Approccio compatibile (cover/originali, prove, energia)" });
+    comps.push({ key: "style", s, t: { k: "style_compatible" } });
   }
   // Ruoli (complementarità dominanza, similarità calore)
   if (a.ipc && b.ipc) {
     const domComp = clamp01(0.5 - (a.ipc.D * b.ipc.D) / 2); // opposti = bene
     const warmSim = 1 - Math.abs(a.ipc.W - b.ipc.W) / 2;    // simili = bene
-    comps.push({ key: "role", s: clamp01(0.5 * domComp + 0.5 * warmSim), label: "Ruoli (leader/supporto)", text: roleText(a.ipc, b.ipc) });
+    comps.push({ key: "role", s: clamp01(0.5 * domComp + 0.5 * warmSim), t: roleText(a.ipc, b.ipc) });
   }
   // Personalità (positività + leggera similarità)
   if (a.big5 && b.big5) {
     const pos = (mean([a.big5.A, b.big5.A]) + mean([a.big5.C, b.big5.C]) + (1 - mean([a.big5.N, b.big5.N]))) / 3;
     const sim = 1 - (["O", "C", "E", "A", "N"].reduce((s, t) => s + Math.abs(a.big5[t] - b.big5[t]), 0) / 5);
-    comps.push({ key: "personality", s: clamp01(0.7 * pos + 0.3 * sim), label: "Carattere", text: "Indole collaborativa e stabile" });
+    comps.push({ key: "personality", s: clamp01(0.7 * pos + 0.3 * sim), t: { k: "personality_collab" } });
   }
 
   // --- Aggregazione: media geometrica pesata (a fasce su effect-size) ---
@@ -212,19 +212,20 @@ function computeAffinity(A, B) {
   comps.forEach(c => { const w = TIERS[c.key] || 1; const s = Math.max(0.05, Math.min(1, c.s)); wsum += w; lnsum += w * Math.log(s); });
   let geo = wsum ? Math.exp(lnsum / wsum) : 0.5;
   // Veto dealbreaker: obiettivi opposti abbassano (non azzerano)
-  if (warn.some(w => w.startsWith("Obiettivi"))) geo *= 0.72;
+  if (warn.some(w => w.k === "warn_goal_diff")) geo *= 0.72;
 
   const score = Math.max(40, Math.min(98, Math.round(40 + 58 * geo)));
-  const parts = comps.map(c => ({ key: c.key, label: c.label, pct: Math.round(c.s * 100), text: c.text })).sort((x, y) => y.pct - x.pct);
+  const parts = comps.map(c => ({ key: c.key, pct: Math.round(c.s * 100), t: c.t })).sort((x, y) => y.pct - x.pct);
 
   // Profondità del profilo (quanti blocchi psicometrici condivisi)
   const blocks = ["values", "goal", "reliability", "role", "personality"].filter(k => parts.some(p => p.key === k)).length;
-  const depth = blocks >= 5 ? "Completo" : blocks >= 3 ? "Approfondito" : blocks >= 1 ? "Buono" : "Base";
+  const depth = blocks >= 5 ? "complete" : blocks >= 3 ? "deep" : blocks >= 1 ? "good" : "basic";
 
   return { score, parts, warn, insight: buildInsight(A, B, comps, taste), depth };
 }
 
-// --- Testi delle componenti (specifici e falsificabili, anti-Barnum) ---
+// --- Descrittori delle componenti (lingua-neutri: {k, ...params}); la UI li localizza via t().
+// Specifici e falsificabili (anti-Barnum). I nomi-valore Schwartz restano token canonici nei params. ---
 function topSharedValue(av, bv) {
   let best = null, bestScore = -Infinity;
   VALUE_KEYS.forEach(k => { const both = Math.min(av[k], bv[k]); if (av[k] > 0.3 && bv[k] > 0.3 && both > bestScore) { bestScore = both; best = k; } });
@@ -232,43 +233,43 @@ function topSharedValue(av, bv) {
 }
 function valuesText(av, bv, r) {
   const k = topSharedValue(av, bv);
-  if (k) return `Stesso valore guida: ${k.toLowerCase()}`;
-  return r >= 0 ? "Sistemi di valori compatibili" : "Valori piuttosto diversi";
+  if (k) return { k: "values_shared", value: k };
+  return r >= 0 ? { k: "values_compatible" } : { k: "values_different" };
 }
 function goalText(g1, g2) {
-  const lvl = ["hobby", "hobby+", "equilibrio", "semi-pro", "professione"];
-  return Math.abs(g1 - g2) <= 1 ? `Stessa ambizione: ${lvl[Math.max(0, Math.min(4, Math.round((g1 + g2) / 2) - 1))]}` : "Ambizioni un po' diverse";
+  return Math.abs(g1 - g2) <= 1
+    ? { k: "goal_same", level: Math.max(0, Math.min(4, Math.round((g1 + g2) / 2) - 1)) }
+    : { k: "goal_diff" };
 }
 function tasteText(t) {
-  if (t.songs.length) { const k = (t.keyShared && t.keyShared.length) ? ` · stessa tonalità reale su ${t.keyShared.length}` : ""; return `${t.songs.length} brano${t.songs.length > 1 ? "i" : ""} in comune: ${t.songs.join(", ")}${k}`; }
-  if (t.genres.length) return `Generi in comune: ${t.genres.join(", ")}`;
-  return "Pochi gusti in comune";
+  if (t.songs.length) return { k: "taste_songs", count: t.songs.length, songs: t.songs.join(", "), keyShared: (t.keyShared && t.keyShared.length) || 0 };
+  if (t.genres.length) return { k: "taste_genres", genres: t.genres.join(", ") };
+  return { k: "taste_few" };
 }
 function roleText(ia, ib) {
-  if (ia.D * ib.D < -0.04) return "Uno tende a guidare, l'altro a sostenere: ruoli che si incastrano";
-  if (ia.D > 0.2 && ib.D > 0.2) return "Entrambi leader: attenzione a chi prende le decisioni";
-  return "Ruoli equilibrati";
+  if (ia.D * ib.D < -0.04) return { k: "role_complement" };
+  if (ia.D > 0.2 && ib.D > 0.2) return { k: "role_both_lead" };
+  return { k: "role_balanced" };
 }
 
-// --- Insight "sorprendente" (serendipity), specifico e falsificabile ---
+// --- Insight "sorprendente" (serendipity), specifico e falsificabile — descrittore lingua-neutro. ---
 function buildInsight(A, B, comps, taste) {
-  const a = A.deep || {}, b = B.deep || {}, name = (B.name || "").split(" ")[0] || "voi";
+  const a = A.deep || {}, b = B.deep || {}, name = (B.name || "").split(" ")[0] || "";
   // 1) valore condiviso NON ovvio (inferito dal test, non dichiarato)
   if (a.values && b.values) {
     const k = topSharedValue(a.values, b.values);
-    if (k) return { kind: "valore", text: `Oltre alla musica condividete un valore profondo: ${k.toLowerCase()}. Spesso è ciò che tiene insieme un gruppo nel tempo.` };
+    if (k) return { kind: "valore", k: "insight_valore", value: k };
   }
   // 2) complementarità di ruolo (differenza vista come risorsa)
   if (a.ipc && b.ipc && a.ipc.D * b.ipc.D < -0.06) {
-    const leader = a.ipc.D > b.ipc.D ? "tu guidi" : `${name} guida`;
-    return { kind: "ruolo", text: `Vi completate: ${leader} e l'altro/a sostiene. Un equilibrio che funziona, se il rispetto è reciproco.` };
+    return { kind: "ruolo", k: "insight_ruolo", who: a.ipc.D > b.ipc.D ? "you" : "name", name };
   }
   // 3) brano in comune (relevance concreta)
-  if (taste.songs.length) return { kind: "brano", text: `Sapete entrambi “${taste.songs[0]}”: potreste suonarla già alla prima prova.` };
+  if (taste.songs.length) return { kind: "brano", k: "insight_brano", song: taste.songs[0] };
   // 4) stessa ambizione
   if (a.goal != null && b.goal != null && Math.abs(a.goal - b.goal) <= 1)
-    return { kind: "obiettivo", text: `Avete la stessa idea di dove volete arrivare con la musica: raro e prezioso.` };
-  if (taste.genres.length) return { kind: "genere", text: `Stessa zona musicale (${taste.genres.join(", ")}): buon punto di partenza per una jam.` };
+    return { kind: "obiettivo", k: "insight_obiettivo" };
+  if (taste.genres.length) return { kind: "genere", k: "insight_genere", genres: taste.genres.join(", ") };
   return null;
 }
 
