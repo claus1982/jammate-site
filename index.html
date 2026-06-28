@@ -96,6 +96,12 @@
     .wordmark{font-weight:800;letter-spacing:-.045em;line-height:.92;
       font-size:clamp(52px,12vw,108px);color:var(--text)}
     .grad{background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+    /* wordmark: il gradiente viola↔rosa "respira" lentamente (leggerissimo) */
+    .wordmark .grad{
+      background:linear-gradient(110deg,#8b6cff,#b06bf0,#ff5c9d,#b06bf0,#8b6cff);
+      background-size:230% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;
+      animation:wordmark-flow 9.5s ease-in-out infinite}
+    @keyframes wordmark-flow{0%,100%{background-position:0% 50%}50%{background-position:100% 50%}}
 
     .wave{width:clamp(180px,42vw,320px);height:clamp(38px,7vw,58px);overflow:visible}
     .wave svg{width:100%;height:100%;overflow:visible}
@@ -236,6 +242,7 @@
       .glimpse{transform:none!important;filter:none!important;
         transition:opacity .45s linear!important}
       .signal-status .s-dot{animation:none}
+      .wordmark .grad{animation:none;background:var(--grad);-webkit-background-clip:text;background-clip:text}
     }
   </style>
 </head>
