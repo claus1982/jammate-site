@@ -228,11 +228,15 @@
     .wave .node{animation:node-flash 6.5s var(--ease) infinite}
 
     @media (max-width:560px){
+      /* mobile: layout che scorre dall'alto — niente clip dell'icona (no
+         flex-centering), e meta-top/footer in flusso (non fixed) così non
+         coprono il contenuto che scorre. */
+      body{justify-content:flex-start;padding:clamp(16px,4vw,24px) clamp(16px,4vw,24px) 0}
+      .meta-top{position:static;width:100%;justify-content:center;padding:0;margin-bottom:18px}
       .meta-top .coordpt{display:none}
-      .sep{font-size:30px;opacity:.55;margin-top:6px}
-      .count{gap:8px}
-      .unit{min-width:0}
-      .frame{inset:9px}
+      .stage{gap:clamp(18px,4.5vw,26px)}
+      .foot{position:static;margin-top:auto;padding:28px 0 18px}
+      .frame{display:none}
     }
     @media (prefers-reduced-motion:reduce){
       .wave .w-r{animation:none;transform:translateX(0)}
