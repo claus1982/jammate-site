@@ -140,9 +140,9 @@
   function p2(n) { return (n < 10 ? "0" : "") + n; }
   function momentText() {
     var d = new Date(), h = d.getHours();
-    if (h >= 5 && h < 12)  return "una mattina a Milano · qualcosa si accorda";
-    if (h >= 12 && h < 18) return "pomeriggio a Milano · le frequenze si cercano";
-    if (h >= 18)           return "stasera a Milano · due voci si trovano";
+    if (h >= 5 && h < 12)  return "di prima mattina · qualcosa si accorda";
+    if (h >= 12 && h < 18) return "è pomeriggio · le frequenze si cercano";
+    if (h >= 18)           return "stasera · due voci si trovano";
     return "le " + p2(h) + ":" + p2(d.getMinutes()) + " · e c'è ancora chi suona";
   }
   function clockText() {
@@ -160,7 +160,7 @@
     { i: "rings", t: "presto — e non come te l'aspetti" },
     { i: "wave",  t: "due frequenze, una sola fase" },
     { i: "bars",  t: "la tua prossima jam comincia da qui" },
-    { i: "pin",   t: "la scena di Milano, in un posto solo" },
+    { i: "pin",   t: "la scena italiana, in un posto solo" },
     { i: "rings", t: "non l'hai mai sentito così" },
     { i: "pin",   t: momentText },
     { i: "rings", t: clockText },
