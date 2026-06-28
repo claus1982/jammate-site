@@ -3,9 +3,6 @@
 (function () {
   "use strict";
 
-  // ── Momento del go-live: domani sera, 29.06.2026 ore 21:00 (CEST = UTC+2) ──
-  var TARGET = new Date("2026-06-29T21:00:00+02:00").getTime();
-
   var SVGNS = "http://www.w3.org/2000/svg";
   function el(name, attrs) {
     var n = document.createElementNS(SVGNS, name);
@@ -60,46 +57,7 @@
     }
   }
 
-  // ── Countdown ─────────────────────────────────────────────────────────────
-  var pad = function (n) { return (n < 10 ? "0" : "") + n; };
   var $ = function (id) { return document.getElementById(id); };
-  var dd = $("dd"), hh = $("hh"), mm = $("mm"), ss = $("ss"),
-      sr = $("sr"), stage = $("stage"), enter = $("enter");
-  var lastMin = -1, live = false, reloadTimer = null;
-
-  function plural(n, s, p) { return n + " " + (n === 1 ? s : p); }
-
-  function goLive() {
-    if (live) return;
-    live = true;
-    if (stage) {
-      stage.classList.add("is-live");
-      var lede = stage.querySelector(".lede");
-      if (lede) lede.textContent = "Siamo in fase. JamMate è online.";
-    }
-    if (sr) sr.textContent = "JamMate è online. Entra nel sito.";
-    // Quando il sito definitivo verrà ripubblicato, chi ha la pagina aperta
-    // entra da solo al primo refresh utile (cadenza calma, niente "reload storm").
-    if (!reloadTimer) reloadTimer = setInterval(function () { location.reload(); }, 30000);
-  }
-
-  function tick() {
-    var diff = TARGET - Date.now();
-    if (diff <= 0) { dd.textContent = hh.textContent = mm.textContent = ss.textContent = "00"; goLive(); return; }
-    var s = Math.floor(diff / 1000);
-    var d = Math.floor(s / 86400); s -= d * 86400;
-    var h = Math.floor(s / 3600);  s -= h * 3600;
-    var m = Math.floor(s / 60);    s -= m * 60;
-    dd.textContent = pad(d); hh.textContent = pad(h); mm.textContent = pad(m); ss.textContent = pad(s);
-    if (m !== lastMin) {
-      lastMin = m;
-      var parts = [];
-      if (d) parts.push(plural(d, "giorno", "giorni"));
-      parts.push(plural(h, "ora", "ore"));
-      parts.push(plural(m, "minuto", "minuti"));
-      if (sr) sr.textContent = "JamMate va live tra " + parts.join(", ") + ".";
-    }
-  }
 
   // ── Waitlist "avvisami al lancio" ─────────────────────────────────────────
   function initNotify() {
@@ -152,8 +110,6 @@
     buildWaves();
     buildLadder();
     initNotify();
-    tick();
-    setInterval(tick, 1000);
   }
 
   if (document.readyState === "loading") {

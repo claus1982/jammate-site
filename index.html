@@ -13,7 +13,7 @@
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="JamMate" />
   <meta property="og:title" content="JamMate — stiamo per andare in risonanza" />
-  <meta property="og:description" content="Due voci stanno entrando in fase. Il primo segnale arriva il 29.06.2026, ore 21:00." />
+  <meta property="og:description" content="Due voci stanno entrando in fase. Il rilascio arriva presto — iscriviti per essere avvisato al lancio." />
   <meta property="og:url" content="https://www.jammate.it/" />
   <meta property="og:image" content="https://www.jammate.it/og.png" />
   <meta property="og:image:width" content="1200" />
@@ -22,7 +22,7 @@
   <meta property="og:locale" content="it_IT" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="JamMate — stiamo per andare in risonanza" />
-  <meta name="twitter:description" content="Due voci stanno entrando in fase. Il primo segnale arriva il 29.06.2026, ore 21:00." />
+  <meta name="twitter:description" content="Due voci stanno entrando in fase. Il rilascio arriva presto — iscriviti per essere avvisato al lancio." />
   <meta name="twitter:image" content="https://www.jammate.it/og.png" />
 
   <title>JamMate — stiamo per andare live</title>
@@ -110,18 +110,7 @@
     .sub{font-size:clamp(13px,1.7vw,15.5px);color:var(--muted);max-width:40ch;line-height:1.5}
     .sub b{color:var(--text);font-weight:700}
 
-    /* ── Countdown ────────────────────────────────────────────────────────── */
-    .count{display:flex;align-items:flex-start;justify-content:center;
-      gap:clamp(8px,2vw,26px);margin-top:2px}
-    .unit{display:flex;flex-direction:column;align-items:center;gap:9px;min-width:clamp(56px,15vw,92px)}
-    .num{font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:-.04em;
-      font-size:clamp(40px,10vw,80px);line-height:1;color:var(--text);
-      font-feature-settings:"tnum" 1}
-    .lab{font-family:var(--mono);font-size:clamp(9px,1.2vw,11px);letter-spacing:.22em;
-      text-transform:uppercase;color:#9ea4cc}
-    .sep{font-weight:500;font-size:clamp(34px,8vw,64px);line-height:1.1;color:var(--line);
-      letter-spacing:-.02em;align-self:flex-start;margin-top:2px;user-select:none}
-
+    /* ── Coordinate go-live ───────────────────────────────────────────────── */
     .coord{font-family:var(--mono);font-size:clamp(10px,1.4vw,13px);letter-spacing:.16em;
       text-transform:uppercase;color:var(--muted);
       display:inline-flex;align-items:center;gap:12px;flex-wrap:wrap;justify-content:center;
@@ -134,8 +123,8 @@
       font-family:var(--mono);font-size:clamp(9px,1.05vw,11px);letter-spacing:.16em;
       text-transform:uppercase;color:var(--faint)}
 
-    /* ── Stato "live" (a T-0) ─────────────────────────────────────────────── */
-    .stage.is-live .count,.stage.is-live .sub{display:none}
+    /* ── Stato "live" (al go-live dell'app vera) ──────────────────────────── */
+    .stage.is-live .sub{display:none}
     .stage.is-live .lede{font-size:clamp(20px,3vw,30px);font-weight:700}
     .enter{display:none;margin-top:6px;text-decoration:none;
       font-weight:700;font-size:15px;letter-spacing:.02em;color:#fff;
@@ -250,20 +239,10 @@
       <h1 class="wordmark">Jam<span class="grad">Mate</span></h1>
       <div class="wave" id="wave" aria-hidden="true"></div>
       <p class="lede">Due voci stanno entrando in fase.</p>
-      <p class="sub">JamMate sta per andare live. Il primo segnale arriva <b>domani sera</b> &mdash; e poi si suona.</p>
+      <p class="sub">JamMate sta per andare live. Il rilascio arriva <b>presto</b> &mdash; e poi si suona.</p>
     </div>
 
-    <section class="count" id="count" aria-hidden="true">
-      <div class="unit"><span class="num" id="dd">00</span><span class="lab">giorni</span></div>
-      <span class="sep">:</span>
-      <div class="unit"><span class="num" id="hh">00</span><span class="lab">ore</span></div>
-      <span class="sep">:</span>
-      <div class="unit"><span class="num" id="mm">00</span><span class="lab">min</span></div>
-      <span class="sep">:</span>
-      <div class="unit"><span class="num" id="ss">00</span><span class="lab">sec</span></div>
-    </section>
-
-    <div class="coord"><i class="pin"></i> GO-LIVE &nbsp;&middot;&nbsp; 29.06.2026 &nbsp;&middot;&nbsp; 21:00 CEST &nbsp;&middot;&nbsp; MILANO</div>
+    <div class="coord"><i class="pin"></i> GO-LIVE &nbsp;&middot;&nbsp; IN ARRIVO &nbsp;&middot;&nbsp; MILANO</div>
 
     <form class="notify" id="notify" novalidate>
       <div class="ea-badge"><i class="ea-dot"></i><span class="ea-txt">Early Adopter</span></div>
